@@ -28,7 +28,8 @@ monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
   noSemanticValidation: false,
   noSyntaxValidation: false,
   // 1108: 'return' outside a function — snippets are allowed to be loose.
-  diagnosticCodesToIgnore: [1108],
+  // 2307: unresolved module — cross-method imports resolve at run time, not here.
+  diagnosticCodesToIgnore: [1108, 2307],
 });
 
 loader.config({ monaco });

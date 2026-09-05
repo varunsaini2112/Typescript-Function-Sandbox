@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { isPass } from '../lib/runner';
-import type { Matcher, MethodDoc, SandboxResult, TestCase } from '../types';
+import type { Matcher, MethodDoc, SandboxResult, SourceLocation, TestCase } from '../types';
 import ResultView from './ResultView';
 
 interface Props {
@@ -12,6 +12,8 @@ interface Props {
   onDeleteTest: (testId: string) => void;
   onRunTest: (testId: string) => void;
   onRunAll: () => void;
+  onExportTests: () => void;
+  onJumpTo: (location: SourceLocation) => void;
 }
 
 const MATCHERS: { value: Matcher; label: string; hint: string }[] = [
@@ -36,6 +38,8 @@ export default function TestsPanel({
   onDeleteTest,
   onRunTest,
   onRunAll,
+  onExportTests,
+  onJumpTo,
 }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -51,6 +55,14 @@ export default function TestsPanel({
         </button>
         <button className="btn" onClick={onAddTest}>
           + Add case
+        </button>
+        <button
+          className="btn"
+          onClick={onExportTests}
+          disabled={method.tests.length === 0}
+          title="Download a Vitest file for these cases"
+        >
+          Export
         </button>
         {scored.length > 0 && (
           <span className={`summary ${passing === scored.length ? 'good' : 'bad'}`}>
@@ -78,6 +90,7 @@ export default function TestsPanel({
                 <input
                   type="checkbox"
                   checked={test.enabled}
+                  aria-label={`Include "${test.name}" when running all`}
                   title={test.enabled ? 'Included in Run all' : 'Skipped'}
                   onChange={(e) => onChangeTest(test.id, { enabled: e.target.checked })}
                 />
@@ -88,16 +101,24 @@ export default function TestsPanel({
                   className="test-name"
                   value={test.name}
                   placeholder="describe this case"
+                  aria-label="Test case name"
                   onChange={(e) => onChangeTest(test.id, { name: e.target.value })}
                 />
-                <button className="icon" title="Run this case" onClick={() => onRunTest(test.id)}>
+                <button className="icon" aria-label={`Run "${test.name}"`} title="Run this case" onClick={() => onRunTest(test.id)}>
                   ▶
                 </button>
-                <button className="icon" title={isOpen ? 'Collapse' : 'Edit'} onClick={() => setOpen((o) => ({ ...o, [test.id]: !isOpen }))}>
+                <button
+                  className="icon"
+                  aria-label={isOpen ? 'Collapse case' : 'Edit case'}
+                  aria-expanded={isOpen}
+                  title={isOpen ? 'Collapse' : 'Edit'}
+                  onClick={() => setOpen((o) => ({ ...o, [test.id]: !isOpen }))}
+                >
                   {isOpen ? '▴' : '▾'}
                 </button>
                 <button
                   className="icon danger"
+                  aria-label={`Delete "${test.name}"`}
                   title="Delete case"
                   onClick={() => onDeleteTest(test.id)}
                 >
@@ -108,10 +129,11 @@ export default function TestsPanel({
               {isOpen && (
                 <div className="test-body">
                   <div className="field">
-                    <label>
+                    <label htmlFor={`args-${test.id}`}>
                       Arguments <span className="hint">JS array</span>
                     </label>
                     <textarea
+                      id={`args-${test.id}`}
                       className="code-input"
                       spellCheck={false}
                       value={test.argsExpr}
@@ -120,8 +142,9 @@ export default function TestsPanel({
                   </div>
 
                   <div className="field">
-                    <label>Matcher</label>
+                    <label htmlFor={`matcher-${test.id}`}>Matcher</label>
                     <select
+                      id={`matcher-${test.id}`}
                       value={test.matcher}
                       onChange={(e) => onChangeTest(test.id, { matcher: e.target.value as Matcher })}
                     >
@@ -136,11 +159,12 @@ export default function TestsPanel({
 
                   {(test.matcher === 'equals' || test.matcher === 'throws') && (
                     <div className="field">
-                      <label>
+                      <label htmlFor={`expected-${test.id}`}>
                         {test.matcher === 'throws' ? 'Error message contains' : 'Expected'}
                         <span className="hint">{test.matcher === 'throws' ? 'plain text' : 'JS expression'}</span>
                       </label>
                       <textarea
+                        id={`expected-${test.id}`}
                         className="code-input"
                         spellCheck={false}
                         value={test.expectedExpr}
@@ -151,7 +175,9 @@ export default function TestsPanel({
                 </div>
               )}
 
-              {result && (isOpen || !isPass(result)) && <ResultView result={result} compact />}
+              {result && (isOpen || !isPass(result)) && (
+                <ResultView result={result} compact onJumpTo={onJumpTo} />
+              )}
             </div>
           );
         })}

@@ -1,44 +1,110 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { type OnMount } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import Sidebar, { type MethodBadge } from './components/Sidebar';
 import RunPanel from './components/RunPanel';
 import TestsPanel from './components/TestsPanel';
-import { detectEntryName } from './lib/compile';
+import TagEditor from './components/TagEditor';
+import Toast, { type ToastState } from './components/Toast';
+import { detectEntryName, hashCode } from './lib/compile';
+import { generateTestFile } from './lib/codegen';
+import { getDiagnostics } from './lib/diagnostics';
 import { isPass, runMethod, runTests } from './lib/runner';
+import { applyTheme, watchSystemTheme } from './lib/theme';
 import {
+  DEFAULT_PREAMBLE,
   exportJson,
   importJson,
   loadWorkspace,
   newMethod,
   newTest,
+  pushHistory,
   saveWorkspace,
   seedWorkspace,
   uid,
+  uniqueName,
 } from './lib/storage';
-import type { MethodDoc, SandboxResult, TestCase, Workspace } from './types';
+import type {
+  MethodDoc,
+  SandboxResult,
+  SourceLocation,
+  TestCase,
+  ThemePref,
+  TypeDiagnostic,
+  Workspace,
+} from './types';
 
 type ResultsByMethod = Record<string, Record<string, SandboxResult>>;
+
+const THEME_LABEL: Record<ThemePref, string> = { light: '☀ Light', dark: '☾ Dark', system: '◐ System' };
+const THEME_ORDER: ThemePref[] = ['system', 'light', 'dark'];
+
+const PREAMBLE_URI = 'file:///preamble.ts';
+
+function download(name: string, content: string, type = 'text/plain') {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  // Revoking in the same tick can race the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => loadWorkspace());
   const [query, setQuery] = useState('');
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const [tab, setTab] = useState<'run' | 'tests'>('run');
+  const [editingPreamble, setEditingPreamble] = useState(false);
   const [runResults, setRunResults] = useState<Record<string, SandboxResult>>({});
   const [testResults, setTestResults] = useState<ResultsByMethod>({});
   const [runningRun, setRunningRun] = useState(false);
   const [runningTests, setRunningTests] = useState<Set<string>>(new Set());
-  const [toast, setToast] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [diagnostics, setDiagnostics] = useState<Record<string, TypeDiagnostic[]>>({});
+  const [toast, setToast] = useState<ToastState | null>(null);
 
+  const fileInput = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const saveTimer = useRef<number | null>(null);
+
+  const notify = useCallback((message: string, options: Partial<ToastState> = {}) => {
+    setToast({ id: uid(), message, ...options });
+  }, []);
+
+  // ---- persistence ----------------------------------------------------------
+
+  // Debounced: the editor fires on every keystroke, and serialising the whole
+  // workspace that often is pure waste.
   useEffect(() => {
-    saveWorkspace(workspace);
-  }, [workspace]);
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const outcome = saveWorkspace(workspace);
+      if (!outcome.ok) notify(outcome.message, { tone: 'error' });
+    }, 400);
+
+    return () => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    };
+  }, [workspace, notify]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3200);
+    const timer = setTimeout(() => setToast(null), toast.action ? 7000 : 3500);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // ---- theme ----------------------------------------------------------------
+
+  const [resolvedTheme, setResolvedTheme] = useState(() => applyTheme(workspace.theme));
+
+  useEffect(() => {
+    setResolvedTheme(applyTheme(workspace.theme));
+    return watchSystemTheme(workspace.theme, () => setResolvedTheme(applyTheme(workspace.theme)));
+  }, [workspace.theme]);
+
+  // ---- selection ------------------------------------------------------------
 
   const selected = useMemo(
     () => workspace.methods.find((m) => m.id === workspace.selectedId) ?? null,
@@ -52,12 +118,58 @@ export default function App() {
     }));
   }, []);
 
+  // ---- shared preamble ------------------------------------------------------
+
+  // Registering the preamble as an extra lib makes its types visible to every
+  // method's editor, matching what the compiler does at run time.
+  useEffect(() => {
+    const defaults = monaco.languages.typescript.typescriptDefaults;
+    const content = workspace.preamble.replace(/^\s*export\s+/gm, '');
+    defaults.setExtraLibs([{ content, filePath: PREAMBLE_URI }]);
+  }, [workspace.preamble]);
+
+  // ---- type diagnostics -----------------------------------------------------
+
+  useEffect(() => {
+    if (!selected || editingPreamble) return;
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        const uri = monaco.Uri.parse(`file:///${selected.name || selected.id}.ts`);
+        const found = await getDiagnostics(uri);
+        if (!cancelled) setDiagnostics((prev) => ({ ...prev, [selected.id]: found }));
+      } catch {
+        // The TS worker is not ready yet; the next edit will retry.
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selected, editingPreamble]);
+
+  const jumpTo = useCallback((location: SourceLocation) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.revealLineInCenter(location.line);
+    editor.setPosition({ lineNumber: location.line, column: location.column });
+    editor.focus();
+  }, []);
+
+  const onEditorMount: OnMount = (editor) => {
+    editorRef.current = editor;
+  };
+
   // ---- method lifecycle -----------------------------------------------------
 
   const createMethod = () => {
-    const method = newMethod({ name: `method${workspace.methods.length + 1}` });
-    method.code = `export function ${method.name}(input: string): string {\n  return input;\n}\n`;
+    const name = uniqueName(`method${workspace.methods.length + 1}`, workspace.methods);
+    const method = newMethod({ name });
+    method.code = `export function ${name}(input: string): string {\n  return input;\n}\n`;
     setWorkspace((ws) => ({ ...ws, methods: [...ws.methods, method], selectedId: method.id }));
+    setEditingPreamble(false);
     setTab('run');
   };
 
@@ -67,7 +179,7 @@ export default function App() {
     const copy: MethodDoc = {
       ...source,
       id: uid(),
-      name: `${source.name}-copy`,
+      name: uniqueName(`${source.name}Copy`, workspace.methods),
       tests: source.tests.map((t) => ({ ...t, id: uid() })),
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -75,7 +187,14 @@ export default function App() {
     setWorkspace((ws) => ({ ...ws, methods: [...ws.methods, copy], selectedId: copy.id }));
   };
 
+  /** Delete straight away and offer an undo — a dialog you dismiss reflexively
+   *  protects less than an undo you can actually use. */
   const deleteMethod = (id: string) => {
+    const index = workspace.methods.findIndex((m) => m.id === id);
+    if (index < 0) return;
+    const removed = workspace.methods[index];
+    const previousSelection = workspace.selectedId;
+
     setWorkspace((ws) => {
       const methods = ws.methods.filter((m) => m.id !== id);
       return {
@@ -84,21 +203,58 @@ export default function App() {
         selectedId: ws.selectedId === id ? (methods[0]?.id ?? null) : ws.selectedId,
       };
     });
+
+    notify(`Deleted ${removed.name}`, {
+      action: {
+        label: 'Undo',
+        run: () =>
+          setWorkspace((ws) => {
+            const methods = [...ws.methods];
+            methods.splice(Math.min(index, methods.length), 0, removed);
+            return { ...ws, methods, selectedId: previousSelection };
+          }),
+      },
+    });
   };
 
   // ---- running --------------------------------------------------------------
 
+  const typeErrorsFor = (method: MethodDoc) =>
+    (diagnostics[method.id] ?? []).filter((d) => d.severity === 'error');
+
   const doRun = useCallback(async () => {
     if (!selected) return;
+
+    if (workspace.blockRunOnTypeError && typeErrorsFor(selected).length > 0) {
+      notify('Blocked: this method has type errors.', { tone: 'error' });
+      return;
+    }
+
     setRunningRun(true);
-    const result = await runMethod(selected, selected.lastArgsExpr);
+    const result = await runMethod(
+      selected,
+      workspace.methods,
+      workspace.preamble,
+      selected.lastArgsExpr,
+    );
     setRunResults((prev) => ({ ...prev, [selected.id]: result }));
+    setWorkspace((ws) => ({
+      ...ws,
+      history: pushHistory(ws.history, selected.id, {
+        id: uid(),
+        argsExpr: selected.lastArgsExpr,
+        timestamp: Date.now(),
+        codeHash: hashCode(selected.code),
+        result,
+      }),
+    }));
     setRunningRun(false);
-  }, [selected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, workspace.methods, workspace.preamble, workspace.blockRunOnTypeError, diagnostics, notify]);
 
   const runSingleTest = async (method: MethodDoc, test: TestCase) => {
     setRunningTests((prev) => new Set(prev).add(test.id));
-    const [outcome] = await runTests(method, [test]);
+    const [outcome] = await runTests(method, workspace.methods, workspace.preamble, [test]);
     setTestResults((prev) => ({
       ...prev,
       [method.id]: { ...(prev[method.id] ?? {}), [test.id]: outcome.result },
@@ -115,17 +271,24 @@ export default function App() {
     if (!tests.length) return;
     setRunningTests(new Set(tests.map((t) => t.id)));
 
-    await runTests(method, tests, undefined, ({ testId, result }) => {
-      setTestResults((prev) => ({
-        ...prev,
-        [method.id]: { ...(prev[method.id] ?? {}), [testId]: result },
-      }));
-      setRunningTests((prev) => {
-        const next = new Set(prev);
-        next.delete(testId);
-        return next;
-      });
-    });
+    await runTests(
+      method,
+      workspace.methods,
+      workspace.preamble,
+      tests,
+      undefined,
+      ({ testId, result }) => {
+        setTestResults((prev) => ({
+          ...prev,
+          [method.id]: { ...(prev[method.id] ?? {}), [testId]: result },
+        }));
+        setRunningTests((prev) => {
+          const next = new Set(prev);
+          next.delete(testId);
+          return next;
+        });
+      },
+    );
 
     setRunningTests(new Set());
   };
@@ -133,10 +296,12 @@ export default function App() {
   const runEverything = async () => {
     let pass = 0;
     let fail = 0;
+
     for (const method of workspace.methods) {
       const tests = method.tests.filter((t) => t.enabled);
       if (!tests.length) continue;
-      const outcomes = await runTests(method, tests);
+
+      const outcomes = await runTests(method, workspace.methods, workspace.preamble, tests);
       setTestResults((prev) => ({
         ...prev,
         [method.id]: {
@@ -144,9 +309,13 @@ export default function App() {
           ...Object.fromEntries(outcomes.map((o) => [o.testId, o.result])),
         },
       }));
-      for (const o of outcomes) (isPass(o.result) ? pass++ : fail++);
+      for (const outcome of outcomes) (isPass(outcome.result) ? pass++ : fail++);
     }
-    setToast(fail === 0 ? `All ${pass} test${pass === 1 ? '' : 's'} passing.` : `${pass} passing, ${fail} failing.`);
+
+    notify(
+      fail === 0 ? `All ${pass} test${pass === 1 ? '' : 's'} passing.` : `${pass} passing, ${fail} failing.`,
+      fail ? { tone: 'error' } : {},
+    );
   };
 
   // ---- test editing ---------------------------------------------------------
@@ -167,14 +336,35 @@ export default function App() {
 
   const deleteTest = (testId: string) => {
     if (!selected) return;
-    patchMethod(selected.id, { tests: selected.tests.filter((t) => t.id !== testId) });
+    const index = selected.tests.findIndex((t) => t.id === testId);
+    if (index < 0) return;
+    const removed = selected.tests[index];
+    const methodId = selected.id;
+
+    patchMethod(methodId, { tests: selected.tests.filter((t) => t.id !== testId) });
+    notify(`Deleted case "${removed.name}"`, {
+      action: {
+        label: 'Undo',
+        run: () =>
+          setWorkspace((ws) => ({
+            ...ws,
+            methods: ws.methods.map((m) => {
+              if (m.id !== methodId) return m;
+              const tests = [...m.tests];
+              tests.splice(Math.min(index, tests.length), 0, removed);
+              return { ...m, tests };
+            }),
+          })),
+      },
+    });
   };
 
-  /** Capture the last run as a new expectation — the fastest way to build a regression net. */
+  /** Capture the last run as a new expectation — the fastest way to build a net. */
   const saveRunAsTest = () => {
     if (!selected) return;
     const result = runResults[selected.id];
     if (!result?.ok || !result.value) return;
+
     const test = newTest({
       name: `case ${selected.tests.length + 1}`,
       argsExpr: selected.lastArgsExpr,
@@ -187,29 +377,55 @@ export default function App() {
       [selected.id]: { ...(prev[selected.id] ?? {}), [test.id]: { ...result, passed: true, phase: 'expect' } },
     }));
     setTab('tests');
-    setToast('Captured the current output as an expectation.');
+    notify('Captured the current output as an expectation.');
+  };
+
+  const exportTests = () => {
+    if (!selected) return;
+    download(`${selected.name}.test.ts`, generateTestFile(selected, workspace.methods), 'text/typescript');
+    notify(`Exported ${selected.name}.test.ts`);
   };
 
   // ---- import / export ------------------------------------------------------
 
   const doExport = () => {
-    const blob = new Blob([exportJson(workspace)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `ts-sandbox-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    download(
+      `ts-sandbox-${new Date().toISOString().slice(0, 10)}.json`,
+      exportJson(workspace),
+      'application/json',
+    );
   };
 
   const doImport = async (file: File) => {
     try {
-      const methods = importJson(await file.text());
-      setWorkspace((ws) => ({ ...ws, methods: [...ws.methods, ...methods], selectedId: methods[0]?.id ?? ws.selectedId }));
-      setToast(`Imported ${methods.length} method${methods.length === 1 ? '' : 's'}.`);
+      const { methods, preamble } = importJson(await file.text());
+      setWorkspace((ws) => {
+        const merged = [...ws.methods];
+        for (const method of methods) {
+          merged.push({ ...method, name: uniqueName(method.name, merged) });
+        }
+        return {
+          ...ws,
+          methods: merged,
+          preamble: preamble ?? ws.preamble,
+          selectedId: methods[0]?.id ?? ws.selectedId,
+        };
+      });
+      notify(`Imported ${methods.length} method${methods.length === 1 ? '' : 's'}.`);
     } catch (err) {
-      setToast(`Import failed: ${(err as Error).message}`);
+      notify(`Import failed: ${(err as Error).message}`, { tone: 'error' });
     }
+  };
+
+  const doReset = () => {
+    const previous = workspace;
+    setWorkspace(seedWorkspace());
+    setRunResults({});
+    setTestResults({});
+    setDiagnostics({});
+    notify('Workspace reset to the bundled examples.', {
+      action: { label: 'Undo', run: () => setWorkspace(previous) },
+    });
   };
 
   // ---- keyboard -------------------------------------------------------------
@@ -224,7 +440,10 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doRun, tab, selected]);
+
+  // ---- derived --------------------------------------------------------------
 
   const badges = useMemo(() => {
     const out: Record<string, MethodBadge> = {};
@@ -243,7 +462,30 @@ export default function App() {
     return out;
   }, [workspace.methods, testResults]);
 
+  const errorCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [id, list] of Object.entries(diagnostics)) {
+      out[id] = list.filter((d) => d.severity === 'error').length;
+    }
+    return out;
+  }, [diagnostics]);
+
+  const allTags = useMemo(
+    () => [...new Set(workspace.methods.flatMap((m) => m.tags))].sort(),
+    [workspace.methods],
+  );
+
   const detected = selected ? detectEntryName(selected.code) : '';
+  const monacoTheme = resolvedTheme === 'dark' ? 'vs-dark' : 'vs';
+
+  const editorOptions = {
+    fontSize: 13,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    tabSize: 2,
+    automaticLayout: true,
+    padding: { top: 12 },
+  } as const;
 
   return (
     <div className="app">
@@ -252,9 +494,30 @@ export default function App() {
           <strong>TS Sandbox</strong>
           <span className="hint">write · run · test TypeScript methods</span>
         </div>
+
         <div className="topbar-actions">
+          <label className="toggle" title="Refuse to run a method that has type errors">
+            <input
+              type="checkbox"
+              checked={workspace.blockRunOnTypeError}
+              onChange={(e) => setWorkspace((ws) => ({ ...ws, blockRunOnTypeError: e.target.checked }))}
+            />
+            block on type errors
+          </label>
           <button className="btn" onClick={runEverything} disabled={workspace.methods.length === 0}>
             ▶ Run all tests
+          </button>
+          <button
+            className="btn"
+            onClick={() =>
+              setWorkspace((ws) => ({
+                ...ws,
+                theme: THEME_ORDER[(THEME_ORDER.indexOf(ws.theme) + 1) % THEME_ORDER.length],
+              }))
+            }
+            aria-label={`Theme: ${workspace.theme}. Click to change.`}
+          >
+            {THEME_LABEL[workspace.theme]}
           </button>
           <button className="btn" onClick={doExport}>
             Export
@@ -262,16 +525,7 @@ export default function App() {
           <button className="btn" onClick={() => fileInput.current?.click()}>
             Import
           </button>
-          <button
-            className="btn"
-            onClick={() => {
-              if (confirm('Reset the workspace to the bundled examples? Your current methods will be lost.')) {
-                setWorkspace(seedWorkspace());
-                setRunResults({});
-                setTestResults({});
-              }
-            }}
-          >
+          <button className="btn" onClick={doReset}>
             Reset
           </button>
           <input
@@ -279,6 +533,7 @@ export default function App() {
             type="file"
             accept="application/json"
             hidden
+            aria-label="Import a workspace JSON file"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void doImport(file);
@@ -291,17 +546,52 @@ export default function App() {
       <div className="body">
         <Sidebar
           methods={workspace.methods}
-          selectedId={workspace.selectedId}
+          selectedId={editingPreamble ? null : workspace.selectedId}
           query={query}
+          activeTags={activeTags}
           badges={badges}
+          errorCounts={errorCounts}
+          preambleOpen={editingPreamble}
           onQueryChange={setQuery}
-          onSelect={(id) => setWorkspace((ws) => ({ ...ws, selectedId: id }))}
+          onToggleTag={(tag) =>
+            setActiveTags((tags) => (tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag]))
+          }
+          onSelect={(id) => {
+            setEditingPreamble(false);
+            setWorkspace((ws) => ({ ...ws, selectedId: id }));
+          }}
           onCreate={createMethod}
           onDuplicate={duplicateMethod}
           onDelete={deleteMethod}
+          onOpenPreamble={() => setEditingPreamble(true)}
         />
 
-        {selected ? (
+        {editingPreamble ? (
+          <main className="workarea">
+            <div className="method-head">
+              <span className="preamble-title">Shared preamble</span>
+              <span className="hint">
+                Prepended to every method at compile time, and visible to every editor.
+              </span>
+              <button
+                className="btn"
+                onClick={() => setWorkspace((ws) => ({ ...ws, preamble: DEFAULT_PREAMBLE }))}
+              >
+                Restore default
+              </button>
+            </div>
+            <div className="editor-wrap">
+              <Editor
+                path={PREAMBLE_URI}
+                language="typescript"
+                theme={monacoTheme}
+                value={workspace.preamble}
+                onChange={(value) => setWorkspace((ws) => ({ ...ws, preamble: value ?? '' }))}
+                options={editorOptions}
+              />
+            </div>
+          </main>
+        ) : selected ? (
           <>
             <main className="workarea">
               <div className="method-head">
@@ -309,12 +599,18 @@ export default function App() {
                   className="title-input"
                   value={selected.name}
                   placeholder="method name"
+                  aria-label="Method name"
                   onChange={(e) => patchMethod(selected.id, { name: e.target.value })}
+                  onBlur={(e) => {
+                    const unique = uniqueName(e.target.value.trim() || 'untitled', workspace.methods, selected.id);
+                    if (unique !== selected.name) patchMethod(selected.id, { name: unique });
+                  }}
                 />
                 <input
                   className="desc-input"
                   value={selected.description}
                   placeholder="what does it do?"
+                  aria-label="Method description"
                   onChange={(e) => patchMethod(selected.id, { description: e.target.value })}
                 />
                 <label className="entry-field" title="Which function the sandbox calls">
@@ -322,36 +618,49 @@ export default function App() {
                   <input
                     value={selected.entryName}
                     placeholder={detected || 'auto'}
+                    aria-label="Entry function override"
                     onChange={(e) => patchMethod(selected.id, { entryName: e.target.value })}
                   />
                 </label>
               </div>
 
+              <div className="tag-bar">
+                <TagEditor
+                  tags={selected.tags}
+                  suggestions={allTags}
+                  onChange={(tags) => patchMethod(selected.id, { tags })}
+                />
+              </div>
+
               <div className="editor-wrap">
                 <Editor
-                  path={`file:///${selected.id}.ts`}
+                  path={`file:///${selected.name || selected.id}.ts`}
                   language="typescript"
-                  theme="vs-dark"
+                  theme={monacoTheme}
                   value={selected.code}
+                  onMount={onEditorMount}
                   onChange={(value) => patchMethod(selected.id, { code: value ?? '' })}
-                  options={{
-                    fontSize: 13,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    tabSize: 2,
-                    automaticLayout: true,
-                    padding: { top: 12 },
-                  }}
+                  options={editorOptions}
                 />
               </div>
             </main>
 
             <aside className="panel">
-              <div className="tabs">
-                <button className={tab === 'run' ? 'tab active' : 'tab'} onClick={() => setTab('run')}>
+              <div className="tabs" role="tablist">
+                <button
+                  role="tab"
+                  aria-selected={tab === 'run'}
+                  className={tab === 'run' ? 'tab active' : 'tab'}
+                  onClick={() => setTab('run')}
+                >
                   Run
                 </button>
-                <button className={tab === 'tests' ? 'tab active' : 'tab'} onClick={() => setTab('tests')}>
+                <button
+                  role="tab"
+                  aria-selected={tab === 'tests'}
+                  className={tab === 'tests' ? 'tab active' : 'tab'}
+                  onClick={() => setTab('tests')}
+                >
                   Tests <span className="count">{selected.tests.length}</span>
                 </button>
               </div>
@@ -360,10 +669,17 @@ export default function App() {
                 <RunPanel
                   method={selected}
                   result={runResults[selected.id] ?? null}
+                  history={workspace.history[selected.id] ?? []}
+                  diagnostics={diagnostics[selected.id] ?? []}
+                  currentCodeHash={hashCode(selected.code)}
                   running={runningRun}
-                  onArgsChange={(value) => patchMethod(selected.id, { lastArgsExpr: value })}
+                  onPatch={(patch) => patchMethod(selected.id, patch)}
                   onRun={doRun}
                   onSaveAsTest={saveRunAsTest}
+                  onJumpTo={jumpTo}
+                  onClearHistory={() =>
+                    setWorkspace((ws) => ({ ...ws, history: { ...ws.history, [selected.id]: [] } }))
+                  }
                 />
               ) : (
                 <TestsPanel
@@ -378,6 +694,8 @@ export default function App() {
                     if (test) void runSingleTest(selected, test);
                   }}
                   onRunAll={() => void runAllTests(selected)}
+                  onExportTests={exportTests}
+                  onJumpTo={jumpTo}
                 />
               )}
             </aside>
@@ -392,7 +710,7 @@ export default function App() {
         )}
       </div>
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <Toast toast={toast} onDismiss={() => setToast(null)} />}
     </div>
   );
 }
