@@ -17,9 +17,11 @@ export default function Toast({ toast, onDismiss }: Props) {
       {toast.action && (
         <button
           className="toast-action"
+          // Dismiss first: an action may raise its own follow-up toast, and
+          // dismissing afterwards would clear the one it just set.
           onClick={() => {
-            toast.action?.run();
             onDismiss();
+            toast.action?.run();
           }}
         >
           {toast.action.label}

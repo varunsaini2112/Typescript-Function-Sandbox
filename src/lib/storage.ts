@@ -44,13 +44,21 @@ export const DEFAULT_PREAMBLE = `// Types and helpers here are in scope for ever
 // They are prepended at compile time and shared across the workspace.
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+
+export function ok<T>(value: T): Result<T> {
+  return { ok: true, value };
+}
+
+export function err<T = never>(error: string): Result<T> {
+  return { ok: false, error };
+}
 `;
 
 const SEED_METHODS: MethodDoc[] = [
   newMethod({
     name: 'slugify',
     description: 'Turn an arbitrary title into a URL-safe slug.',
-    tags: ['strings'],
+    tags: ['strings', 'text'],
     code: `export function slugify(title: string): string {
   return title
     .trim()
@@ -69,6 +77,81 @@ const SEED_METHODS: MethodDoc[] = [
       }),
       newTest({ name: 'trims stray separators', argsExpr: '["  --Edge case--  "]', expectedExpr: '"edge-case"' }),
       newTest({ name: 'empty string stays empty', argsExpr: '[""]', expectedExpr: '""' }),
+    ],
+  }),
+  newMethod({
+    name: 'truncate',
+    description: 'Shorten text to a maximum length, adding an ellipsis. Note the optional third parameter.',
+    tags: ['strings', 'text'],
+    code: `export function truncate(text: string, max: number, suffix = "…"): string {
+  if (max <= 0) throw new Error("max must be greater than 0");
+  if (text.length <= max) return text;
+
+  return text.slice(0, Math.max(0, max - suffix.length)) + suffix;
+}
+`,
+    lastArgsExpr: '["the quick brown fox", 12]',
+    lastArgs: ['"the quick brown fox"', '12'],
+    tests: [
+      newTest({ name: 'shortens long text', argsExpr: '["hello world", 8]', expectedExpr: '"hello w…"' }),
+      newTest({ name: 'leaves short text alone', argsExpr: '["short", 10]', expectedExpr: '"short"' }),
+      newTest({ name: 'honours a custom suffix', argsExpr: '["hello world", 8, "..."]', expectedExpr: '"hello..."' }),
+      newTest({
+        name: 'rejects a zero maximum',
+        argsExpr: '["abc", 0]',
+        matcher: 'throws',
+        expectedExpr: 'max must be greater than 0',
+      }),
+    ],
+  }),
+  newMethod({
+    name: 'titleCase',
+    description: 'Imports slugify — one method building directly on another.',
+    tags: ['strings', 'text', 'composed'],
+    code: `import { slugify } from "./slugify";
+
+export function titleCase(title: string): string {
+  return slugify(title)
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
+`,
+    lastArgsExpr: '["hello, typescript world!"]',
+    lastArgs: ['"hello, typescript world!"'],
+    tests: [
+      newTest({
+        name: 'capitalises each word',
+        argsExpr: '["hello, typescript world!"]',
+        expectedExpr: '"Hello Typescript World"',
+      }),
+    ],
+  }),
+  newMethod({
+    name: 'headline',
+    description: 'Imports titleCase and truncate — a three-level chain down to slugify.',
+    tags: ['strings', 'text', 'composed'],
+    code: `import { titleCase } from "./titleCase";
+import { truncate } from "./truncate";
+
+export function headline(raw: string, max = 24): string {
+  return truncate(titleCase(raw), max);
+}
+`,
+    lastArgsExpr: '["the quick brown fox jumps over", 24]',
+    lastArgs: ['"the quick brown fox jumps over"', '24'],
+    tests: [
+      newTest({
+        name: 'title-cases then truncates',
+        argsExpr: '["the quick brown fox jumps over", 24]',
+        expectedExpr: '"The Quick Brown Fox Jum…"',
+      }),
+      newTest({
+        name: 'leaves a short headline whole',
+        argsExpr: '["hello world"]',
+        expectedExpr: '"Hello World"',
+      }),
     ],
   }),
   newMethod({
@@ -103,26 +186,61 @@ const SEED_METHODS: MethodDoc[] = [
     ],
   }),
   newMethod({
-    name: 'titleCase',
-    description: 'Imports slugify — demonstrates one method building on another.',
-    tags: ['strings'],
-    code: `import { slugify } from "./slugify";
+    name: 'groupBy',
+    description: 'Group items by a derived key. Returns an object, so failures show a keyed diff path.',
+    tags: ['arrays', 'collections'],
+    code: `export function groupBy<T, K extends string>(
+  items: T[],
+  key: (item: T) => K,
+): Record<K, T[]> {
+  const out = {} as Record<K, T[]>;
 
-export function titleCase(title: string): string {
-  return slugify(title)
-    .split("-")
-    .filter(Boolean)
-    .map((word) => word[0].toUpperCase() + word.slice(1))
-    .join(" ");
+  for (const item of items) {
+    const group = key(item);
+    (out[group] ??= []).push(item);
+  }
+  return out;
 }
 `,
-    lastArgsExpr: '["hello, typescript world!"]',
-    lastArgs: ['"hello, typescript world!"'],
+    lastArgsExpr: '[[{ name: "ana", team: "red" }, { name: "bo", team: "blue" }], (p) => p.team]',
+    lastArgs: ['[{ name: "ana", team: "red" }, { name: "bo", team: "blue" }]', '(p) => p.team'],
     tests: [
       newTest({
-        name: 'capitalises each word',
-        argsExpr: '["hello, typescript world!"]',
-        expectedExpr: '"Hello Typescript World"',
+        name: 'buckets by the key function',
+        argsExpr:
+          '[[{ name: "ana", team: "red" }, { name: "bo", team: "blue" }, { name: "cy", team: "red" }], (p) => p.team]',
+        expectedExpr:
+          '{ red: [{ name: "ana", team: "red" }, { name: "cy", team: "red" }], blue: [{ name: "bo", team: "blue" }] }',
+      }),
+      newTest({ name: 'empty input gives an empty object', argsExpr: '[[], (x) => "k"]', expectedExpr: '{}' }),
+    ],
+  }),
+  newMethod({
+    name: 'parsePort',
+    description: 'Uses Result, ok and err from the shared preamble.',
+    tags: ['parsing', 'validation'],
+    code: `export function parsePort(input: string): Result<number> {
+  const value = Number(input);
+
+  if (!Number.isInteger(value)) return err("not an integer");
+  if (value < 1 || value > 65535) return err("out of range");
+
+  return ok(value);
+}
+`,
+    lastArgsExpr: '["8080"]',
+    lastArgs: ['"8080"'],
+    tests: [
+      newTest({ name: 'accepts a valid port', argsExpr: '["8080"]', expectedExpr: '{ ok: true, value: 8080 }' }),
+      newTest({
+        name: 'rejects non-numeric input',
+        argsExpr: '["http"]',
+        expectedExpr: '{ ok: false, error: "not an integer" }',
+      }),
+      newTest({
+        name: 'rejects an out-of-range port',
+        argsExpr: '["70000"]',
+        expectedExpr: '{ ok: false, error: "out of range" }',
       }),
     ],
   }),
@@ -161,6 +279,7 @@ export async function retryWithBackoff<T>(
     };
   })()
 ]`,
+    argsMode: 'raw',
     tests: [
       newTest({
         name: 'succeeds on the third attempt',
@@ -185,11 +304,36 @@ export async function retryWithBackoff<T>(
   }),
 ];
 
+/**
+ * Fresh copies of the bundled examples, with new ids every call so they can be
+ * added to a workspace that already has content without colliding.
+ */
+export function exampleMethods(): MethodDoc[] {
+  const now = Date.now();
+  return SEED_METHODS.map((method) => ({
+    ...method,
+    id: uid(),
+    tests: method.tests.map((test) => ({ ...test, id: uid() })),
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
+/**
+ * The bundled examples whose names are not already taken — so adding examples to
+ * an existing library never duplicates or overwrites the user's own methods.
+ */
+export function missingExamples(methods: MethodDoc[]): MethodDoc[] {
+  const taken = new Set(methods.map((m) => m.name.trim().toLowerCase()));
+  return exampleMethods().filter((m) => !taken.has(m.name.trim().toLowerCase()));
+}
+
 export function seedWorkspace(): Workspace {
+  const methods = exampleMethods();
   return {
     version: 2,
-    methods: SEED_METHODS,
-    selectedId: SEED_METHODS[0].id,
+    methods,
+    selectedId: methods[0].id,
     preamble: DEFAULT_PREAMBLE,
     theme: 'system',
     blockRunOnTypeError: false,

@@ -6,8 +6,9 @@ import RunPanel from './components/RunPanel';
 import TestsPanel from './components/TestsPanel';
 import TagEditor from './components/TagEditor';
 import Toast, { type ToastState } from './components/Toast';
+import ExportMenu from './components/ExportMenu';
 import { detectEntryName, hashCode } from './lib/compile';
-import { generateTestFile } from './lib/codegen';
+import { generateSourceFile, generateTestFile, parseSourceFile } from './lib/codegen';
 import { getDiagnostics } from './lib/diagnostics';
 import { isPass, runMethod, runTests } from './lib/runner';
 import { applyTheme, watchSystemTheme } from './lib/theme';
@@ -16,6 +17,7 @@ import {
   exportJson,
   importJson,
   loadWorkspace,
+  missingExamples,
   newMethod,
   newTest,
   pushHistory,
@@ -388,7 +390,7 @@ export default function App() {
 
   // ---- import / export ------------------------------------------------------
 
-  const doExport = () => {
+  const exportWorkspace = () => {
     download(
       `ts-sandbox-${new Date().toISOString().slice(0, 10)}.json`,
       exportJson(workspace),
@@ -396,25 +398,120 @@ export default function App() {
     );
   };
 
-  const doImport = async (file: File) => {
-    try {
-      const { methods, preamble } = importJson(await file.text());
+  const exportMethod = () => {
+    if (!selected) return;
+    download(`${selected.name}.ts`, generateSourceFile(selected), 'text/typescript');
+    notify(`Exported ${selected.name}.ts`);
+  };
+
+  /**
+   * Accepts both shapes: a workspace `.json`, and a `.ts` file — whether it was
+   * written by this app (metadata restored) or is any other TypeScript file
+   * (name and description inferred, nothing blocking).
+   */
+  const doImport = async (files: File[]) => {
+    const added: MethodDoc[] = [];
+    let importedPreamble: string | undefined;
+    const failures: string[] = [];
+    let incomplete = 0;
+
+    for (const file of files) {
+      try {
+        const text = await file.text();
+
+        if (/\.json$/i.test(file.name)) {
+          const parsed = importJson(text);
+          added.push(...parsed.methods);
+          importedPreamble ??= parsed.preamble;
+        } else {
+          const fallback = file.name.replace(/\.[^.]+$/, '');
+          const partial = parseSourceFile(text, fallback);
+          const method = newMethod({ ...partial, id: uid() });
+          if (!method.description.trim() || method.tests.length === 0) incomplete++;
+          added.push(method);
+        }
+      } catch (err) {
+        failures.push(`${file.name}: ${(err as Error).message}`);
+      }
+    }
+
+    // An imported preamble must never silently destroy one the user has written.
+    // Adopting it is only safe while theirs is still the untouched default.
+    const mine = workspace.preamble;
+    const pristine = !mine.trim() || mine.trim() === DEFAULT_PREAMBLE.trim();
+    const hasImported = importedPreamble !== undefined && importedPreamble !== mine;
+    const conflict = hasImported && !pristine;
+    const adopted = hasImported && !conflict ? importedPreamble : undefined;
+
+    if (added.length) {
       setWorkspace((ws) => {
         const merged = [...ws.methods];
-        for (const method of methods) {
+        for (const method of added) {
           merged.push({ ...method, name: uniqueName(method.name, merged) });
         }
         return {
           ...ws,
           methods: merged,
-          preamble: preamble ?? ws.preamble,
-          selectedId: methods[0]?.id ?? ws.selectedId,
+          preamble: adopted ?? ws.preamble,
+          selectedId: added[0].id,
         };
       });
-      notify(`Imported ${methods.length} method${methods.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      notify(`Import failed: ${(err as Error).message}`, { tone: 'error' });
+      setEditingPreamble(false);
     }
+
+    if (failures.length) {
+      notify(`Import failed — ${failures.join('; ')}`, { tone: 'error' });
+      return;
+    }
+
+    const note = incomplete ? ` ${incomplete} still needs a description or tests.` : '';
+    const counted = `Imported ${added.length} method${added.length === 1 ? '' : 's'}.${note}`;
+
+    if (conflict) {
+      // Offer the swap rather than performing it, and keep that undoable too.
+      notify(`${counted} The file has a different preamble — yours was kept.`, {
+        action: {
+          label: 'Use theirs',
+          run: () => {
+            setWorkspace((ws) => ({ ...ws, preamble: importedPreamble as string }));
+            notify('Preamble replaced.', {
+              action: { label: 'Undo', run: () => setWorkspace((ws) => ({ ...ws, preamble: mine })) },
+            });
+          },
+        },
+      });
+    } else {
+      notify(counted);
+    }
+  };
+
+  /**
+   * Top up an existing library with any bundled examples it does not already
+   * have. Workspaces saved before an example was added would otherwise never
+   * see it, since the seeds only apply to a brand-new workspace.
+   */
+  const addExamples = () => {
+    const additions = missingExamples(workspace.methods);
+    if (!additions.length) {
+      notify('Every bundled example is already in your library.');
+      return;
+    }
+
+    const addedIds = new Set(additions.map((m) => m.id));
+    setWorkspace((ws) => ({
+      ...ws,
+      methods: [...ws.methods, ...additions],
+      selectedId: additions[0].id,
+    }));
+    setEditingPreamble(false);
+
+    notify(`Added ${additions.length}: ${additions.map((m) => m.name).join(', ')}`, {
+      action: {
+        label: 'Undo',
+        run: () =>
+          setWorkspace((ws) => ({ ...ws, methods: ws.methods.filter((m) => !addedIds.has(m.id)) })),
+      },
+    });
   };
 
   const doReset = () => {
@@ -519,11 +616,16 @@ export default function App() {
           >
             {THEME_LABEL[workspace.theme]}
           </button>
-          <button className="btn" onClick={doExport}>
-            Export
-          </button>
+          <ExportMenu
+            methodName={editingPreamble ? null : (selected?.name ?? null)}
+            onExportMethod={exportMethod}
+            onExportWorkspace={exportWorkspace}
+          />
           <button className="btn" onClick={() => fileInput.current?.click()}>
             Import
+          </button>
+          <button className="btn" onClick={addExamples} title="Add any bundled examples you do not have yet">
+            Examples
           </button>
           <button className="btn" onClick={doReset}>
             Reset
@@ -531,12 +633,13 @@ export default function App() {
           <input
             ref={fileInput}
             type="file"
-            accept="application/json"
+            multiple
+            accept=".ts,.tsx,.js,.json,application/json,text/plain"
             hidden
-            aria-label="Import a workspace JSON file"
+            aria-label="Import method (.ts) or workspace (.json) files"
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void doImport(file);
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) void doImport(files);
               e.target.value = '';
             }}
           />

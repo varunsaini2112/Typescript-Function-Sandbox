@@ -42,12 +42,12 @@ before an edit are marked *code changed*, so you can tell what is still current.
 
 **Tests (right).** Test cases live with the method. Each has its own arguments and a matcher:
 
-| Matcher  | Passes when                                                            |
-| -------- | ---------------------------------------------------------------------- |
-| `equals` | the return value deep-equals the expected expression                   |
-| `throws` | it throws, and the message contains the given text                     |
-| `truthy` | the return value is truthy                                             |
-| `runs`   | nothing throws                                                         |
+| Matcher    | Passes when                                          |
+| ---------- | ---------------------------------------------------- |
+| `equals` | the return value deep-equals the expected expression |
+| `throws` | it throws, and the message contains the given text   |
+| `truthy` | the return value is truthy                           |
+| `runs`   | nothing throws                                       |
 
 Run one case, all cases for a method, or every case in the workspace from the top bar. A failure
 reports the **first differing path** (`items[2].name`) rather than dumping two big objects, and
@@ -65,9 +65,38 @@ methods get the `await expect(...).resolves` / `.rejects` forms.
 
 **Theme.** Light, dark, or follow the system — the button in the top bar cycles between them.
 
-**Export / Import.** Writes the whole workspace (methods plus preamble) to JSON and reads it back.
-Imported names are de-duplicated so they never collide with an existing method. **Reset** restores
-the bundled examples, and is undoable.
+## Export and import
+
+**Export ▾** in the top bar offers two scopes:
+
+- **This method (`.ts`)** — a real TypeScript file. The description becomes JSDoc, the code is the
+  file body, and a trailing `/* @sandbox … */` comment carries the tests, tags and argument values.
+  `tsc` ignores that comment, so the file drops straight into a repo and compiles; importing it back
+  here restores the method whole. `*/` appearing inside your code or test data is escaped as `*\/`,
+  which JSON parses back transparently, so it cannot close the block early.
+- **Whole workspace (`.json`)** — every method plus the preamble. This is your backup; everything
+  otherwise lives only in `localStorage`.
+
+**Import** accepts both, and several files at once:
+
+- A `.json` workspace merges its methods in.
+- A `.ts` file written by this app comes back complete.
+- **Any other `.ts` file** imports too. The name comes from the exported function, and a plain prose
+  JSDoc above it becomes the description. A comment carrying `@param`/`@returns` is real API
+  documentation, so it is left in the code and not lifted. Nothing blocks the import — anything
+  missing is reported in the toast and can be filled in later.
+
+Imported names are de-duplicated (`slugify` → `slugify2`), which matters because a method's name is
+also its import specifier.
+
+**Importing never destroys your preamble.** If the file carries one, it is adopted only while yours
+is still the untouched default. Otherwise yours is kept and the toast offers to swap — and that swap
+is itself undoable.
+
+**Examples** adds any bundled example your library does not already have, matched by name, leaving
+everything you have written untouched. This is what to use when the app has been updated with new
+examples: the seeds only apply to a brand-new workspace, so a library saved earlier would never see
+them otherwise. **Reset** replaces the workspace outright with the examples, and is undoable.
 
 ## How it runs your code
 
@@ -95,6 +124,7 @@ src/
     TestsPanel.tsx         test case editing, results, Vitest export
     ResultView.tsx         shared result rendering, difference display
     TagEditor.tsx          tag chips on a method
+    ExportMenu.tsx         method (.ts) vs workspace (.json) export
     Toast.tsx              notifications, including undo actions
   lib/
     compile.ts             TS -> JS + source map, entry/param/import detection
@@ -104,7 +134,7 @@ src/
     sourcemap.ts           minimal source-map reader (VLQ decode, position lookup)
     inspect.ts             value formatting, deep equality, difference finding
     diagnostics.ts         pulls type errors out of Monaco's TS worker
-    codegen.ts             Vitest/Jest test file generation
+    codegen.ts             .ts method files (read/write) and Vitest generation
     storage.ts             localStorage, import/export, history, seed examples
     theme.ts               light/dark/system resolution
 ```

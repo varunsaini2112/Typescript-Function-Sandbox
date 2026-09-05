@@ -1,4 +1,4 @@
-import { detectImports, isAsyncEntry, splitTopLevel } from './compile';
+import { detectEntryName, detectImports, isAsyncEntry, splitTopLevel } from './compile';
 import { normalizeSpecifier } from './bundle';
 import { entryFor } from './runner';
 import type { MethodDoc, TestCase } from '../types';
@@ -108,9 +108,109 @@ ${cases}
 `;
 }
 
-/** The method itself as a standalone source file, description kept as JSDoc. */
+// ---- single-method .ts files ------------------------------------------------
+
+const SANDBOX_OPEN = '/* @sandbox — ts-sandbox metadata; delete this block and the file still compiles';
+
+/** Everything about a method except its code, which is the file body itself. */
+interface MethodFileMeta {
+  name: string;
+  description: string;
+  entryName: string;
+  tags: string[];
+  lastArgsExpr: string;
+  lastArgs: string[];
+  argsMode: MethodDoc['argsMode'];
+  tests: TestCase[];
+  /** Lines of generated JSDoc above the code, so import can strip exactly those. */
+  headerLines: number;
+}
+
+/**
+ * The method as a standalone `.ts` file: the description becomes JSDoc, and a
+ * trailing comment carries the test cases and settings. `tsc` ignores the
+ * comment, so the file drops straight into a repo, but importing it back here
+ * restores the method whole.
+ */
 export function generateSourceFile(method: MethodDoc): string {
   const description = method.description.trim();
-  const header = description ? `/**\n * ${description.split('\n').join('\n * ')}\n */\n` : '';
-  return header + method.code;
+  const header = description
+    ? `/**\n${description.split('\n').map((line) => ` * ${line}`).join('\n')}\n */\n`
+    : '';
+  const headerLines = header ? header.split('\n').length - 1 : 0;
+
+  const meta: MethodFileMeta = {
+    name: method.name,
+    description: method.description,
+    entryName: method.entryName,
+    tags: method.tags,
+    lastArgsExpr: method.lastArgsExpr,
+    lastArgs: method.lastArgs,
+    argsMode: method.argsMode,
+    tests: method.tests,
+    headerLines,
+  };
+
+  // `*/` inside test code would close the comment early. `\/` is a valid JSON
+  // string escape, so JSON.parse restores it with no unescaping step of our own.
+  const json = JSON.stringify(meta, null, 2).replace(/\*\//g, '*\\/');
+
+  return `${header}${method.code.trimEnd()}\n\n${SANDBOX_OPEN}\n${json}\n*/\n`;
+}
+
+const META_BLOCK = /\/\*\s*@sandbox\b[^\n]*\n([\s\S]*?)\n\*\/\s*$/;
+const LEADING_JSDOC = /^\s*\/\*\*([\s\S]*?)\*\/\n?/;
+
+/**
+ * Read a `.ts` file back into a method. Files written by `generateSourceFile`
+ * come back whole; any other TypeScript file still imports, with the name and
+ * description inferred and the rest left for the user to fill in.
+ */
+export function parseSourceFile(text: string, fallbackName: string): Partial<MethodDoc> {
+  const match = text.match(META_BLOCK);
+
+  if (match) {
+    try {
+      const meta = JSON.parse(match[1]) as Partial<MethodFileMeta>;
+      const body = text.slice(0, match.index).trimEnd();
+      const code = body.split('\n').slice(meta.headerLines ?? 0).join('\n');
+
+      return {
+        name: meta.name || fallbackName,
+        description: meta.description ?? '',
+        entryName: meta.entryName ?? '',
+        tags: meta.tags ?? [],
+        lastArgsExpr: meta.lastArgsExpr ?? '[]',
+        lastArgs: meta.lastArgs ?? [],
+        argsMode: meta.argsMode ?? 'fields',
+        tests: meta.tests ?? [],
+        code: `${code}\n`,
+      };
+    } catch {
+      // Metadata is corrupt — fall through and treat it as a plain source file.
+    }
+  }
+
+  // A plain TypeScript file: infer what we can, leave the rest empty.
+  let code = text;
+  let description = '';
+  const doc = text.match(LEADING_JSDOC);
+
+  // Only lift a prose comment into the description. One carrying @param/@returns
+  // is real API documentation and belongs in the code. JSDoc lines start with an
+  // asterisk, which has to be skipped before looking for the tag.
+  if (doc && !/^[ \t]*\*?[ \t]*@\w+/m.test(doc[1])) {
+    description = doc[1]
+      .split('\n')
+      .map((line) => line.replace(/^\s*\*\s?/, '').trimEnd())
+      .join('\n')
+      .trim();
+    code = text.slice(doc[0].length);
+  }
+
+  return {
+    name: detectEntryName(code) || fallbackName,
+    description,
+    code: code.trimEnd() + '\n',
+  };
 }
