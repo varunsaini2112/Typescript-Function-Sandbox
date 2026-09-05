@@ -16,6 +16,7 @@ import {
   DEFAULT_PREAMBLE,
   exportJson,
   importJson,
+  isPristinePreamble,
   loadWorkspace,
   missingExamples,
   newMethod,
@@ -438,7 +439,7 @@ export default function App() {
     // An imported preamble must never silently destroy one the user has written.
     // Adopting it is only safe while theirs is still the untouched default.
     const mine = workspace.preamble;
-    const pristine = !mine.trim() || mine.trim() === DEFAULT_PREAMBLE.trim();
+    const pristine = isPristinePreamble(mine);
     const hasImported = importedPreamble !== undefined && importedPreamble !== mine;
     const conflict = hasImported && !pristine;
     const adopted = hasImported && !conflict ? importedPreamble : undefined;

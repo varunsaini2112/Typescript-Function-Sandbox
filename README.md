@@ -27,7 +27,8 @@ reported as clear errors rather than confusing runtime failures.
 
 **Shared preamble.** One workspace-level file of types and helpers, prepended to every method at
 compile time and registered with the editor so intellisense sees it everywhere. Open it from the
-bottom of the sidebar.
+bottom of the sidebar. If you have never edited it, it is carried forward automatically when the
+bundled default gains new helpers; once you edit it, it is yours and is never overwritten.
 
 **Run (right).** Arguments get one input per parameter, labelled with the parameter's own name;
 switch to `raw` for a plain array when you need spreads or rest parameters. Values are JavaScript

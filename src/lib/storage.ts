@@ -54,6 +54,36 @@ export function err<T = never>(error: string): Result<T> {
 }
 `;
 
+/**
+ * Every DEFAULT_PREAMBLE that has shipped. A stored preamble matching one of
+ * these was never edited, so it is safe to move forward to the current default —
+ * otherwise a workspace saved before a helper was added would never receive it,
+ * and examples relying on that helper would arrive broken.
+ */
+const LEGACY_PREAMBLES: string[] = [
+  `// Types and helpers here are in scope for every method.
+// They are prepended at compile time and shared across the workspace.
+
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+`,
+];
+
+/** True when the preamble is empty or is an unedited default, current or past. */
+export function isPristinePreamble(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return true;
+  return (
+    normalized === DEFAULT_PREAMBLE.trim() ||
+    LEGACY_PREAMBLES.some((legacy) => legacy.trim() === normalized)
+  );
+}
+
+/** Carry an untouched preamble forward; leave anything the user wrote alone. */
+function upgradePreamble(stored: string | undefined): string {
+  if (stored === undefined) return DEFAULT_PREAMBLE;
+  return isPristinePreamble(stored) ? DEFAULT_PREAMBLE : stored;
+}
+
 const SEED_METHODS: MethodDoc[] = [
   newMethod({
     name: 'slugify',
@@ -354,7 +384,7 @@ export function loadWorkspace(): Workspace {
       version: 2,
       methods: parsed.methods.map(normalize),
       selectedId: parsed.selectedId ?? null,
-      preamble: parsed.preamble ?? DEFAULT_PREAMBLE,
+      preamble: upgradePreamble(parsed.preamble),
       theme: parsed.theme ?? 'system',
       blockRunOnTypeError: parsed.blockRunOnTypeError ?? false,
       history: parsed.history ?? {},
