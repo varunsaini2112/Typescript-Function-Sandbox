@@ -29,8 +29,10 @@ monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
   noSemanticValidation: false,
   noSyntaxValidation: false,
   // 1108: 'return' outside a function — snippets are allowed to be loose.
-  // 2307: unresolved module — cross-method imports resolve at run time, not here.
-  diagnosticCodesToIgnore: [1108, 2307],
+  // 2307 is deliberately NOT ignored: every method is registered as a model, so
+  // a cross-method import that fails to resolve is a genuine error worth seeing,
+  // and reporting it plainly beats the implicit-any cascade it used to cause.
+  diagnosticCodesToIgnore: [1108],
 });
 
 loader.config({ monaco });

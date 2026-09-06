@@ -161,6 +161,42 @@ export default function App() {
     defaults.setExtraLibs([{ content, filePath: PREAMBLE_URI }]);
   }, [workspace.preamble]);
 
+  // ---- editor models --------------------------------------------------------
+
+  /**
+   * Register every method with Monaco, not just the one on screen.
+   *
+   * Monaco only creates a model for a file an editor is actually showing, so
+   * `import { slugify } from "./slugify"` could not resolve unless you happened
+   * to have opened slugify first. The import then fell back to `any`, and the
+   * implicit-any that cascaded from it surfaced as a type error in the importer.
+   */
+  useEffect(() => {
+    const wanted = new Map(
+      workspace.methods.map((method) => [`file:///${method.name || method.id}.ts`, method.code]),
+    );
+
+    for (const [uri, code] of wanted) {
+      const existing = monaco.editor.getModel(monaco.Uri.parse(uri));
+      if (!existing) {
+        monaco.editor.createModel(code, 'typescript', monaco.Uri.parse(uri));
+      } else if (existing.getValue() !== code) {
+        // The open editor keeps its own model in step; only background models
+        // need pushing, and this guard keeps us off the one being typed in.
+        existing.setValue(code);
+      }
+    }
+
+    // Drop models for methods that were renamed or deleted, so a stale name
+    // cannot keep resolving. Never dispose the model currently being edited.
+    const inUse = editorRef.current?.getModel()?.uri.toString();
+    for (const model of monaco.editor.getModels()) {
+      const uri = model.uri.toString();
+      if (uri === PREAMBLE_URI || uri === inUse || wanted.has(uri)) continue;
+      model.dispose();
+    }
+  }, [workspace.methods]);
+
   // ---- type diagnostics -----------------------------------------------------
 
   useEffect(() => {
@@ -258,6 +294,39 @@ export default function App() {
             return { ...ws, methods, selectedId: previousSelection };
           }),
       },
+    });
+  };
+
+  /**
+   * Reorder by moving the dragged method to the target's position. Working in
+   * full-array indices keeps this well defined even while the list is filtered.
+   */
+  const moveMethod = (fromId: string, toId: string, below: boolean) => {
+    if (fromId === toId) return;
+    setWorkspace((ws) => {
+      const methods = [...ws.methods];
+      const from = methods.findIndex((m) => m.id === fromId);
+      if (from < 0) return ws;
+
+      const [moved] = methods.splice(from, 1);
+      const target = methods.findIndex((m) => m.id === toId);
+      if (target < 0) return ws;
+
+      methods.splice(below ? target + 1 : target, 0, moved);
+      return { ...ws, methods };
+    });
+  };
+
+  /** Keyboard reordering, so the library is not mouse-only. */
+  const nudgeMethod = (id: string, delta: number) => {
+    setWorkspace((ws) => {
+      const methods = [...ws.methods];
+      const index = methods.findIndex((m) => m.id === id);
+      const next = index + delta;
+      if (index < 0 || next < 0 || next >= methods.length) return ws;
+
+      [methods[index], methods[next]] = [methods[next], methods[index]];
+      return { ...ws, methods };
     });
   };
 
@@ -704,6 +773,8 @@ export default function App() {
           onDuplicate={duplicateMethod}
           onDelete={deleteMethod}
           onOpenPreamble={() => setEditingPreamble(true)}
+          onReorder={moveMethod}
+          onNudge={nudgeMethod}
         />
 
         {editingPreamble ? (

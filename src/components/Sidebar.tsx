@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { MethodDoc } from '../types';
 
 export interface MethodBadge {
@@ -21,6 +21,10 @@ interface Props {
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onOpenPreamble: () => void;
+  /** Move `fromId` to sit before or after `toId` in the library. */
+  onReorder: (fromId: string, toId: string, below: boolean) => void;
+  /** Keyboard equivalent: shift one place up (-1) or down (+1). */
+  onNudge: (id: string, delta: number) => void;
 }
 
 /** Supports plain text plus `tag:name` terms in the same box. */
@@ -56,7 +60,12 @@ export default function Sidebar({
   onDuplicate,
   onDelete,
   onOpenPreamble,
+  onReorder,
+  onNudge,
 }: Props) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [below, setBelow] = useState(false);
   const allTags = useMemo(() => {
     const counts = new Map<string, number>();
     for (const method of methods) {
@@ -110,12 +119,60 @@ export default function Sidebar({
           const badge = badges[method.id];
           const errors = errorCounts[method.id] ?? 0;
 
+          const dropClass =
+            overId === method.id && dragId && dragId !== method.id
+              ? below
+                ? 'drop-below'
+                : 'drop-above'
+              : '';
+
           return (
-            <div key={method.id} className={`method-item ${method.id === selectedId ? 'active' : ''}`}>
+            <div
+              key={method.id}
+              className={`method-item ${method.id === selectedId ? 'active' : ''} ${
+                dragId === method.id ? 'dragging' : ''
+              } ${dropClass}`}
+              draggable
+              onDragStart={(e) => {
+                setDragId(method.id);
+                e.dataTransfer.effectAllowed = 'move';
+                // Firefox refuses to start a drag without payload.
+                e.dataTransfer.setData('text/plain', method.id);
+              }}
+              onDragOver={(e) => {
+                if (!dragId || dragId === method.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const box = e.currentTarget.getBoundingClientRect();
+                setOverId(method.id);
+                setBelow(e.clientY > box.top + box.height / 2);
+              }}
+              onDragLeave={() => setOverId((current) => (current === method.id ? null : current))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId && dragId !== method.id) onReorder(dragId, method.id, below);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+            >
+              <span className="drag-grip" aria-hidden="true" title="Drag to reorder">
+                ⠿
+              </span>
               <button
                 className="method-item-main"
                 onClick={() => onSelect(method.id)}
                 aria-current={method.id === selectedId}
+                title="Alt + ↑ / ↓ to reorder"
+                onKeyDown={(e) => {
+                  // Reordering must not be mouse-only.
+                  if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                  e.preventDefault();
+                  onNudge(method.id, e.key === 'ArrowUp' ? -1 : 1);
+                }}
               >
                 <span className="method-name">
                   {method.name || 'untitled'}

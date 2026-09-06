@@ -26,6 +26,13 @@
   --confetti-1: #ffb454;
   --confetti-2: #ff7eb6;
   --confetti-3: #46c3e6;
+  /* Frosted surfaces: opaque enough that text on them stays readable. */
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.86);
+  --glass-edge: rgba(255, 255, 255, 0.75);
+  --sheen: rgba(255, 255, 255, 0.55);
+  --ambient-1: rgba(97, 70, 216, 0.1);
+  --ambient-2: rgba(255, 126, 182, 0.07);
   --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
@@ -51,6 +58,12 @@
   --confetti-1: #ffc46b;
   --confetti-2: #ff8ec4;
   --confetti-3: #5fd0ef;
+  --glass: rgba(30, 28, 41, 0.72);
+  --glass-strong: rgba(30, 28, 41, 0.88);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --sheen: rgba(255, 255, 255, 0.16);
+  --ambient-1: rgba(155, 135, 255, 0.14);
+  --ambient-2: rgba(255, 142, 196, 0.08);
   color-scheme: dark;
 }
 
@@ -66,7 +79,11 @@ body,
 }
 
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 620px at 12% -12%, var(--ambient-1), transparent 62%),
+    radial-gradient(900px 520px at 104% -4%, var(--ambient-2), transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -85,8 +102,11 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 10px 14px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  border-bottom: 1px solid var(--glass-edge);
+  z-index: 10;
 }
 
 .brand {
@@ -129,8 +149,10 @@ body {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-2);
-  border-right: 1px solid var(--line);
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-right: 1px solid var(--glass-edge);
 }
 
 .workarea {
@@ -226,10 +248,12 @@ body {
   right: 0;
   z-index: 20;
   min-width: 250px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 10px 28px var(--shadow);
+  background: var(--glass-strong);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid var(--glass-edge);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px var(--shadow), 0 0 0 1px var(--glass-edge) inset;
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -1602,6 +1626,192 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Glass, glow and drag
+   ========================================================================== */
+
+/* ---- frosted surfaces ---------------------------------------------------- */
+
+.toast {
+  background: var(--glass-strong);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 14px 40px var(--shadow), 0 0 0 1px var(--glass-edge) inset;
+}
+
+.panel {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* A light catch along the top edge — what actually reads as "glass".
+   Only the two surfaces that carry a ::before belong here: the popover and the
+   toast are already absolute/fixed, and listing them re-set that to relative,
+   dropping them into normal flow. */
+.editor-wrap,
+.test-card {
+  position: relative;
+}
+
+.editor-wrap::before,
+.test-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--sheen), transparent);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ---- glow ---------------------------------------------------------------- */
+
+.method-item.active {
+  box-shadow: 0 0 0 1px var(--glow), 0 4px 18px -6px var(--glow);
+}
+
+.test-card.pass {
+  box-shadow: 0 0 0 1px var(--good-bg), 0 3px 16px -8px var(--good);
+}
+
+.test-card.fail {
+  box-shadow: 0 0 0 1px var(--bad-bg), 0 3px 16px -8px var(--bad);
+}
+
+.chip.pass {
+  box-shadow: 0 0 12px -3px var(--good);
+}
+
+.chip.fail {
+  box-shadow: 0 0 12px -3px var(--bad);
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+button:focus-visible {
+  box-shadow: 0 0 0 4px var(--glow);
+}
+
+.running-bar::after {
+  box-shadow: 0 0 12px 1px var(--accent);
+}
+
+.save-indicator.saved .save-dot {
+  box-shadow: 0 0 8px -1px var(--good);
+}
+
+.save-indicator.saving .save-dot {
+  box-shadow: 0 0 8px -1px var(--accent);
+}
+
+/* A sheen that sweeps the primary button on hover. */
+.btn.primary {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 78%, var(--confetti-2))
+  );
+}
+
+.btn.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, var(--sheen) 50%, transparent 65%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+
+.btn.primary:hover:not(:disabled)::after {
+  animation: sheen 780ms var(--ease);
+}
+
+@keyframes sheen {
+  to { transform: translateX(120%); }
+}
+
+.btn.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 20px -4px var(--glow), 0 0 0 1px var(--glass-edge) inset;
+}
+
+/* Keep the result flash readable over the gradient. */
+.btn.primary.flash-pass,
+.btn.primary.flash-fail {
+  background-image: none;
+}
+
+/* ---- drag to reorder ----------------------------------------------------- */
+
+.method-item {
+  user-select: none;
+}
+
+.drag-grip {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 140ms var(--ease);
+  pointer-events: none;
+}
+
+.method-item:hover .drag-grip {
+  opacity: 0.7;
+}
+
+.method-item:active .drag-grip {
+  cursor: grabbing;
+}
+
+.method-item:hover .method-item-main {
+  padding-left: 16px;
+}
+
+.method-item-main {
+  transition: padding-left 140ms var(--ease);
+}
+
+.method-item.dragging {
+  opacity: 0.4;
+}
+
+/* Drop indicator, drawn on the row you would land next to. */
+.method-item.drop-above::after,
+.method-item.drop-below::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 10px 1px var(--glow);
+}
+
+.method-item.drop-above::after {
+  top: -2px;
+}
+
+.method-item.drop-below::after {
+  bottom: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn.primary:hover:not(:disabled)::after {
     animation: none;
   }
 }

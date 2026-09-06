@@ -17,6 +17,10 @@ names, descriptions and source, or narrow by tag — `tag:strings` works in the 
 dot marks a method with type errors, so you can see what is broken without opening it. Deleting is
 immediate and offers an **Undo** for a few seconds rather than a confirmation dialog.
 
+**Drag a method to reorder it**, with a line showing where it will land. Reordering works while the
+list is filtered — the move is computed against the full library, so it stays well defined. It is not
+mouse-only: focus a method and use **Alt + ↑ / ↓**.
+
 **Editor (middle).** Monaco with real TypeScript language support — type errors appear as squiggles
 as you type; hover one to read it, ⌥F8 to jump to it, ⌘. for a quick fix. The `entry` box says which
 function gets called; it is auto-detected and only needs filling in when the guess is wrong.
@@ -24,6 +28,10 @@ function gets called; it is auto-detected and only needs filling in when the gue
 **Methods can import each other.** `import { slugify } from "./slugify"` resolves against the
 workspace by method name. Dependencies are compiled in order, and cycles or unresolved names are
 reported as clear errors rather than confusing runtime failures.
+
+Every method is registered with the editor, not just the one on screen, so types flow across imports:
+calling an imported method with the wrong argument type is reported where you make the call, and an
+import that matches no method reads "Cannot find module" rather than silently degrading to `any`.
 
 **Shared preamble.** One workspace-level file of types and helpers, prepended to every method at
 compile time and registered with the editor so intellisense sees it everywhere. Open it from the
@@ -78,8 +86,12 @@ thing it affects.
 shakes, and a whole workspace going green gets a short burst of confetti — reserved for that one
 event so it keeps meaning something. Short synthesised cues play on run completion (never per
 keystroke or per test case), in one of three cue sets; the ⚙ menu holds the mute and the theme. Busy indicators wait 180ms before appearing,
-so the common sub-100ms run stays calm instead of flashing a progress bar. Everything here respects
-`prefers-reduced-motion`.
+so the common sub-100ms run stays calm instead of flashing a progress bar.
+
+Chrome surfaces — the top bar, sidebar, menus and toasts — are frosted glass over an ambient wash, so
+the app reads as layers rather than a flat grid. Glow is used to mean something: the selected method,
+a passing or failing card, the save dot, focus rings, and a sheen that sweeps the primary button on
+hover. Everything here respects `prefers-reduced-motion`.
 
 ## Export and import
 
