@@ -51,7 +51,7 @@ function StringDiff({ difference }: { difference: Difference }) {
 
 function DifferenceBlock({ difference }: { difference: Difference }) {
   return (
-    <section className="result-block difference">
+    <section className="result-block difference expand">
       <h4>
         First difference <span className="diff-path">{difference.path}</span>
       </h4>

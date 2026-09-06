@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { isPass } from '../lib/runner';
+import { useBusyIndicator } from '../lib/useBusy';
 import type { Matcher, MethodDoc, SandboxResult, SourceLocation, TestCase } from '../types';
 import ResultView from './ResultView';
+import CountUp from './CountUp';
 
 interface Props {
   method: MethodDoc;
@@ -20,6 +22,11 @@ const MATCHERS: { value: Matcher; label: string; hint: string }[] = [
   { value: 'equals', label: 'equals', hint: 'Deep equality against the expected value' },
   { value: 'throws', label: 'throws', hint: 'Must throw; expected text is matched as a substring of the message' },
   { value: 'truthy', label: 'truthy', hint: 'Return value must be truthy' },
+  {
+    value: 'snapshot',
+    label: 'snapshot',
+    hint: 'Formatted output must match exactly — works for values no expression can express',
+  },
   { value: 'any', label: 'runs', hint: 'Passes as long as nothing throws' },
 ];
 
@@ -42,6 +49,7 @@ export default function TestsPanel({
   onJumpTo,
 }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const showProgress = useBusyIndicator(runningIds.size > 0);
 
   const enabled = method.tests.filter((t) => t.enabled);
   const scored = enabled.filter((t) => results[t.id]);
@@ -65,11 +73,16 @@ export default function TestsPanel({
           Export
         </button>
         {scored.length > 0 && (
-          <span className={`summary ${passing === scored.length ? 'good' : 'bad'}`}>
-            {passing}/{scored.length} passing
+          <span
+            key={`${passing}-${scored.length}`}
+            className={`summary ${passing === scored.length ? 'good' : 'bad'}`}
+          >
+            <CountUp value={passing} />/{scored.length} passing
           </span>
         )}
       </div>
+
+      {showProgress && <div className="running-bar" aria-label="Running tests" />}
 
       {method.tests.length === 0 && (
         <p className="empty">
@@ -79,7 +92,7 @@ export default function TestsPanel({
       )}
 
       <div className="test-list">
-        {method.tests.map((test) => {
+        {method.tests.map((test, index) => {
           const result = results[test.id];
           const status = statusOf(result, runningIds.has(test.id));
           const isOpen = open[test.id] ?? false;
@@ -157,11 +170,21 @@ export default function TestsPanel({
                     <span className="hint">{MATCHERS.find((m) => m.value === test.matcher)?.hint}</span>
                   </div>
 
-                  {(test.matcher === 'equals' || test.matcher === 'throws') && (
+                  {(test.matcher === 'equals' || test.matcher === 'throws' || test.matcher === 'snapshot') && (
                     <div className="field">
                       <label htmlFor={`expected-${test.id}`}>
-                        {test.matcher === 'throws' ? 'Error message contains' : 'Expected'}
-                        <span className="hint">{test.matcher === 'throws' ? 'plain text' : 'JS expression'}</span>
+                        {test.matcher === 'throws'
+                          ? 'Error message contains'
+                          : test.matcher === 'snapshot'
+                            ? 'Expected output'
+                            : 'Expected'}
+                        <span className="hint">
+                          {test.matcher === 'throws'
+                            ? 'plain text'
+                            : test.matcher === 'snapshot'
+                              ? 'formatted output, compared exactly'
+                              : 'JS expression'}
+                        </span>
                       </label>
                       <textarea
                         id={`expected-${test.id}`}
@@ -176,7 +199,15 @@ export default function TestsPanel({
               )}
 
               {result && (isOpen || !isPass(result)) && (
-                <ResultView result={result} compact onJumpTo={onJumpTo} />
+                // Keyed by duration so a re-run replays the reveal, staggered
+                // down the list so a suite lands as a cascade rather than a jump.
+                <div
+                  key={`${test.id}-${result.durationMs}`}
+                  className="reveal"
+                  style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                >
+                  <ResultView result={result} compact onJumpTo={onJumpTo} />
+                </div>
               )}
             </div>
           );

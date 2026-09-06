@@ -366,6 +366,8 @@ export function seedWorkspace(): Workspace {
     selectedId: methods[0].id,
     preamble: DEFAULT_PREAMBLE,
     theme: 'system',
+    sound: true,
+    cueSet: 'chime',
     blockRunOnTypeError: false,
     history: {},
   };
@@ -386,6 +388,8 @@ export function loadWorkspace(): Workspace {
       selectedId: parsed.selectedId ?? null,
       preamble: upgradePreamble(parsed.preamble),
       theme: parsed.theme ?? 'system',
+      sound: parsed.sound ?? true,
+      cueSet: parsed.cueSet ?? 'chime',
       blockRunOnTypeError: parsed.blockRunOnTypeError ?? false,
       history: parsed.history ?? {},
     };

@@ -49,13 +49,18 @@ before an edit are marked *code changed*, so you can tell what is still current.
 | `throws` | it throws, and the message contains the given text   |
 | `truthy` | the return value is truthy                           |
 | `runs`   | nothing throws                                       |
+| `snapshot` | the formatted output matches exactly               |
 
 Run one case, all cases for a method, or every case in the workspace from the top bar. A failure
 reports the **first differing path** (`items[2].name`) rather than dumping two big objects, and
 strings get character-level highlighting of just the part that differs.
 
 The fastest way to build a suite is to run the method, check the output, and press
-**Save as test case** — that captures the current result as the expectation.
+**Save as test case** — that captures the current result as the expectation. It picks the matcher
+for you: `equals` when the displayed value is a JS expression that evaluates back to the same value,
+and `snapshot` when it is not — a `Date`, a `Map`, a class instance. Snapshot compares the rendering
+itself, so capture works for any return value rather than silently writing an expectation that
+cannot parse.
 
 `equals` compares structurally: `NaN` equals `NaN`, `-0` is distinct from `0`, and Dates, RegExps,
 Maps and Sets compare by content rather than identity.
@@ -64,7 +69,17 @@ Maps and Sets compare by content rather than identity.
 Arguments and expected values are already stored as source text, so they transfer verbatim; async
 methods get the `await expect(...).resolves` / `.rejects` forms.
 
-**Theme.** Light, dark, or follow the system — the button in the top bar cycles between them.
+**Top bar.** One primary action (Run all tests), an Export menu, a ⋯ menu for Import / Add examples /
+Reset, and a ⚙ menu holding theme, sound and the type-error gate. Everything else lives with the
+thing it affects.
+
+**Feedback.** Autosave used to be entirely invisible; a save indicator next to the title now shows
+"saving…" / "saved 2m ago" / "not saved". Results animate in, a passing chip pops and a failing one
+shakes, and a whole workspace going green gets a short burst of confetti — reserved for that one
+event so it keeps meaning something. Short synthesised cues play on run completion (never per
+keystroke or per test case), in one of three cue sets; the ⚙ menu holds the mute and the theme. Busy indicators wait 180ms before appearing,
+so the common sub-100ms run stays calm instead of flashing a progress bar. Everything here respects
+`prefers-reduced-motion`.
 
 ## Export and import
 
@@ -125,7 +140,11 @@ src/
     TestsPanel.tsx         test case editing, results, Vitest export
     ResultView.tsx         shared result rendering, difference display
     TagEditor.tsx          tag chips on a method
-    ExportMenu.tsx         method (.ts) vs workspace (.json) export
+    TopBar.tsx             primary action plus the export/more/settings menus
+    Menu.tsx               shared popover with click-outside and Escape
+    SaveIndicator.tsx      makes autosave visible
+    Celebration.tsx        confetti burst, thrown from its source button
+    CountUp.tsx            rolls a changing number
     Toast.tsx              notifications, including undo actions
   lib/
     compile.ts             TS -> JS + source map, entry/param/import detection
@@ -146,3 +165,7 @@ src/
 - Entry-point and parameter detection is source-pattern based, so unusual declaration forms
   (decorated or overloaded functions) may need the `entry` override.
 - Renaming a method does not rewrite `import` statements in methods that depend on it.
+- Whole-statement `import type` is not treated as a runtime dependency, so type-only cycles are
+  allowed; inline `{ type A, b }` still counts, because `b` is a real binding.
+- Snapshot cases export to Vitest as an empty `toMatchInlineSnapshot()`, since the stored rendering
+  is this app's formatter rather than Vitest's — Vitest fills its own in on first run.

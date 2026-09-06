@@ -5,6 +5,7 @@ import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 import App from './App';
+import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
 
 // Serve Monaco from the local bundle rather than a CDN so the sandbox works offline.

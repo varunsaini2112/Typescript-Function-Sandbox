@@ -14,9 +14,33 @@ export function resolveTheme(preference: ThemePref): ResolvedTheme {
  * `:root` and overrides it for dark, so an explicit choice always wins over the
  * system setting.
  */
-export function applyTheme(preference: ThemePref): ResolvedTheme {
+type WithViewTransition = Document & {
+  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
+};
+
+/**
+ * `animate` is opt-in because a view transition is only valid in response to a
+ * real change. Starting one during the initial render — or twice over, as
+ * StrictMode's double-invoked effects do — is rejected as an invalid state.
+ */
+export function applyTheme(preference: ThemePref, animate = false): ResolvedTheme {
   const resolved = resolveTheme(preference);
-  document.documentElement.dataset.theme = resolved;
+  const swap = () => {
+    document.documentElement.dataset.theme = resolved;
+  };
+
+  // A hard snap between palettes is jarring. View Transitions cross-fade the
+  // whole document for free where supported; elsewhere it just swaps.
+  const doc = document as WithViewTransition;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (animate && doc.startViewTransition && !reduce && document.visibilityState === 'visible') {
+    // A transition can still be superseded; that is not an error worth raising.
+    doc.startViewTransition(swap).finished.catch(() => {});
+  } else {
+    swap();
+  }
+
   return resolved;
 }
 

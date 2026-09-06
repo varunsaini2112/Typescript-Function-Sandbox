@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { detectParams, splitTopLevel } from '../lib/compile';
 import { entryFor } from '../lib/runner';
 import type { MethodDoc, RunHistoryEntry, SandboxResult, SourceLocation, TypeDiagnostic } from '../types';
@@ -48,6 +48,18 @@ export default function RunPanel({
 }: Props) {
   const [showHistory, setShowHistory] = useState(false);
   const [openEntry, setOpenEntry] = useState<string | null>(null);
+
+  // Briefly tint the button itself, so the outcome registers where the eye already is.
+  const [flash, setFlash] = useState<'' | 'flash-pass' | 'flash-fail'>('');
+  const lastResult = useRef<SandboxResult | null>(null);
+
+  useEffect(() => {
+    if (!result || result === lastResult.current) return;
+    lastResult.current = result;
+    setFlash(result.ok ? 'flash-pass' : 'flash-fail');
+    const timer = setTimeout(() => setFlash(''), 700);
+    return () => clearTimeout(timer);
+  }, [result]);
 
   const entry = entryFor(method);
   const params = useMemo(() => detectParams(method.code, entry), [method.code, entry]);
@@ -170,7 +182,7 @@ export default function RunPanel({
       </div>
 
       <div className="row">
-        <button className="btn primary" onClick={onRun} disabled={running}>
+        <button className={`btn primary ${flash}`} onClick={onRun} disabled={running}>
           {running ? 'Running…' : '▶ Run'}
         </button>
         <button className="btn" onClick={onSaveAsTest} disabled={!result || !result.ok}>

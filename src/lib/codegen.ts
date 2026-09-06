@@ -41,6 +41,13 @@ function assertion(test: TestCase, entry: string, isAsync: boolean): string {
         ? `await expect(${call}).rejects.${matcher};`
         : `expect(() => ${call}).${matcher};`;
     }
+    case 'snapshot':
+      // The stored expectation is this app's own rendering, which will not match
+      // Vitest's serialiser. An empty inline snapshot lets Vitest fill in its own
+      // on the first run, which is the honest translation.
+      return isAsync
+        ? `await expect(${call}).resolves.toMatchInlineSnapshot();`
+        : `expect(${call}).toMatchInlineSnapshot();`;
     case 'truthy':
       return isAsync
         ? `await expect(${call}).resolves.toBeTruthy();`

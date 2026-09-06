@@ -1,39 +1,56 @@
 /* Light is the base palette; dark overrides only the tokens. An explicit
-   data-theme always wins over the system preference. */
+   data-theme always wins over the system preference.
+
+   Both palettes are tilted a few degrees off neutral grey towards violet, and
+   the greens and reds are pulled away from traffic-light primaries towards mint
+   and coral. The result reads as considered rather than clinical, while keeping
+   pass and fail instantly separable — including for red/green colour blindness,
+   where the two differ in lightness as well as hue. */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f7f6fb;
   --bg-2: #ffffff;
-  --bg-3: #eceef2;
-  --line: #d8dce3;
-  --text: #1c2027;
-  --muted: #616b7a;
-  --accent: #1f6feb;
+  --bg-3: #efedf6;
+  --line: #e0dcec;
+  --text: #221f2e;
+  --muted: #6b6684;
+  --accent: #6146d8;
+  --accent-soft: #ece8fb;
   --accent-text: #ffffff;
-  --good: #1a7f4b;
-  --bad: #c33232;
-  --good-bg: rgba(26, 127, 75, 0.12);
-  --bad-bg: rgba(195, 50, 50, 0.1);
-  --warn-text: #8a5b00;
-  --shadow: rgba(20, 25, 35, 0.14);
-  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --good: #0f8f68;
+  --bad: #d24457;
+  --good-bg: rgba(15, 143, 104, 0.12);
+  --bad-bg: rgba(210, 68, 87, 0.1);
+  --warn-text: #9a6100;
+  --shadow: rgba(48, 36, 82, 0.16);
+  --glow: rgba(97, 70, 216, 0.22);
+  --confetti-1: #ffb454;
+  --confetti-2: #ff7eb6;
+  --confetti-3: #46c3e6;
+  --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
 }
 
 :root[data-theme='dark'] {
-  --bg: #14161a;
-  --bg-2: #1a1d23;
-  --bg-3: #21252d;
-  --line: #2c313a;
-  --text: #dfe3ea;
-  --muted: #8b94a4;
-  --accent: #4c9aff;
-  --accent-text: #08111f;
-  --good: #4ec98a;
-  --bad: #ff6b6b;
-  --good-bg: rgba(78, 201, 138, 0.15);
-  --bad-bg: rgba(255, 107, 107, 0.15);
-  --warn-text: #ffd479;
-  --shadow: rgba(0, 0, 0, 0.45);
+  --bg: #131219;
+  --bg-2: #1a1922;
+  --bg-3: #24222f;
+  --line: #33303f;
+  --text: #e7e3f2;
+  --muted: #9b95af;
+  --accent: #9b87ff;
+  --accent-soft: #2a2440;
+  --accent-text: #14102a;
+  --good: #4ddba4;
+  --bad: #ff7a8c;
+  --good-bg: rgba(77, 219, 164, 0.14);
+  --bad-bg: rgba(255, 122, 140, 0.14);
+  --warn-text: #ffce70;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --glow: rgba(155, 135, 255, 0.3);
+  --confetti-1: #ffc46b;
+  --confetti-2: #ff8ec4;
+  --confetti-3: #5fd0ef;
   color-scheme: dark;
 }
 
@@ -128,8 +145,10 @@ body {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-2);
+  /* Slightly recessed, so depth does the grouping that borders did alone. */
+  background: var(--bg);
   border-left: 1px solid var(--line);
+  box-shadow: inset 6px 0 12px -10px var(--shadow);
   min-height: 0;
 }
 
@@ -548,21 +567,57 @@ button:focus-visible {
 .editor-wrap {
   flex: 1;
   min-height: 0;
+  margin: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+  box-shadow: 0 1px 3px var(--shadow);
+  opacity: 0;
+  transition: opacity 240ms var(--ease);
+}
+
+.editor-wrap.ready,
+.workarea .editor-wrap:not([class*='ready']) {
+  opacity: 1;
+}
+
+.editor-skeleton {
+  height: 100%;
+  background: linear-gradient(100deg, var(--bg-3) 30%, var(--bg-2) 50%, var(--bg-3) 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1300ms linear infinite;
 }
 
 /* ---- panel --------------------------------------------------------------- */
 
 .tabs {
+  position: relative;
   display: flex;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+}
+
+.tabs::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 50%;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  transition: transform 260ms var(--ease);
+}
+
+.tabs.on-tests::after {
+  transform: translateX(100%);
 }
 
 .tab {
   flex: 1;
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
   color: var(--muted);
   padding: 10px;
   font-size: 12px;
@@ -571,7 +626,6 @@ button:focus-visible {
 
 .tab.active {
   color: var(--text);
-  border-bottom-color: var(--accent);
 }
 
 .count {
@@ -911,6 +965,7 @@ button:focus-visible {
 }
 
 .result-foot {
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-size: 11px;
   text-align: right;
@@ -928,7 +983,8 @@ button:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
-  background: var(--bg-3);
+  background: var(--bg-2);
+  box-shadow: 0 1px 2px var(--shadow);
 }
 
 .test-card.pass {
@@ -1105,4 +1161,447 @@ button:focus-visible {
 
 .toast-close:hover {
   color: var(--text);
+}
+
+/* ==========================================================================
+   Motion, depth and cues
+
+   Every animation here marks a state change — a result arriving, a suite
+   finishing, a save landing. None of it is decoration for its own sake, so
+   turning it all off (below) costs no information.
+   ========================================================================== */
+
+@keyframes pop {
+  0% { transform: scale(0.7); opacity: 0; }
+  60% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 14px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(400%); }
+}
+
+@keyframes confetti-fall {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+  100% { opacity: 0; transform: translate(var(--drift), 78vh) rotate(var(--spin)); }
+}
+
+/* ---- interaction feedback ------------------------------------------------ */
+
+.btn,
+.icon,
+.mini,
+.tag-chip,
+.method-item,
+.tab,
+.menu-item,
+.preamble-link {
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease),
+    color 140ms var(--ease),
+    transform 140ms var(--ease),
+    box-shadow 140ms var(--ease);
+}
+
+.btn:active:not(:disabled),
+.mini:active,
+.icon:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.btn.primary {
+  box-shadow: 0 1px 2px var(--shadow);
+}
+
+.btn.primary:hover:not(:disabled) {
+  box-shadow: 0 3px 12px var(--glow);
+  transform: translateY(-1px);
+}
+
+.tag-chip:hover {
+  transform: translateY(-1px);
+}
+
+/* A sliding accent rail rather than a hard border flip. */
+.method-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform 200ms var(--ease);
+}
+
+.method-item.active::before {
+  transform: scaleY(1);
+}
+
+.method-item.active {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+.method-item:hover {
+  transform: translateX(1px);
+}
+
+/* ---- results ------------------------------------------------------------- */
+
+.result,
+.result-block {
+  animation: rise 260ms var(--ease) both;
+}
+
+/* The moment the tool exists for: make pass and fail feel different. */
+.chip.pass {
+  animation: pop 340ms var(--ease) both;
+}
+
+.chip.fail {
+  animation: shake 380ms var(--ease) both;
+}
+
+.test-card {
+  transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease);
+}
+
+.test-card.pass {
+  box-shadow: 0 0 0 1px var(--good-bg);
+}
+
+.test-card.fail {
+  box-shadow: 0 0 0 1px var(--bad-bg);
+}
+
+.summary {
+  animation: pop 320ms var(--ease) both;
+}
+
+/* Indeterminate progress while a suite is in flight. */
+.running-bar {
+  position: relative;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.running-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 25%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: sweep 1100ms ease-in-out infinite;
+}
+
+/* ---- save indicator ------------------------------------------------------ */
+
+.save-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  animation: rise 200ms var(--ease) both;
+}
+
+.save-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background-color 200ms var(--ease);
+}
+
+.save-indicator.saving .save-dot {
+  background: var(--accent);
+  animation: breathe 1000ms ease-in-out infinite;
+}
+
+.save-indicator.saved .save-dot {
+  background: var(--good);
+}
+
+.save-indicator.error {
+  color: var(--bad);
+}
+
+.save-indicator.error .save-dot {
+  background: var(--bad);
+}
+
+/* ---- toast --------------------------------------------------------------- */
+
+.toast {
+  animation: toast-in 280ms var(--ease) both;
+}
+
+/* ---- celebration --------------------------------------------------------- */
+
+.celebration {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 60;
+}
+
+.confetti {
+  position: absolute;
+  top: -14px;
+  border-radius: 1px;
+  animation: confetti-fall 1250ms cubic-bezier(0.3, 0.7, 0.5, 1) both;
+}
+
+.confetti.round {
+  border-radius: 50%;
+}
+
+/* ---- respect the system preference --------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .method-item:hover,
+  .btn.primary:hover:not(:disabled),
+  .tag-chip:hover {
+    transform: none;
+  }
+}
+
+/* Full-width progress for a workspace-wide run — the longest action here. */
+.running-bar.global {
+  height: 2px;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ==========================================================================
+   Second polish pass — type rhythm, cascade, flashes
+   ========================================================================== */
+
+/* Numbers that change in place must not shift width as they do. */
+.summary,
+.method-meta,
+.history-time,
+.tag-count,
+.count,
+.location-link,
+.log-level {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small-caps labels read better with a touch more tracking and less weight. */
+.field label,
+.result-block h4 {
+  letter-spacing: 0.6px;
+}
+
+.brand strong {
+  letter-spacing: -0.1px;
+  font-size: 14px;
+}
+
+.logo {
+  flex-shrink: 0;
+  border-radius: 6px;
+  display: block;
+}
+
+/* ---- top bar grouping ---------------------------------------------------- */
+
+.topbar-actions .run-all {
+  padding: 6px 14px;
+  font-size: 12.5px;
+}
+
+.btn.icon-btn {
+  padding: 5px 9px;
+  min-width: 30px;
+  font-size: 13px;
+  line-height: 1.15;
+}
+
+.menu-popover.left {
+  right: auto;
+  left: 0;
+}
+
+.menu-group + .menu-group {
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+}
+
+.menu-group-title {
+  display: block;
+  padding: 4px 9px 2px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--muted);
+}
+
+.menu-item.danger:hover:not(:disabled) {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.menu-popover {
+  animation: menu-in 160ms var(--ease) both;
+  transform-origin: top right;
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ---- cascade ------------------------------------------------------------- */
+
+/* Newly mounted rows animate; existing ones do not, so adding five examples
+   at once cascades while ordinary re-renders stay still. */
+.method-item {
+  animation: rise 240ms var(--ease) both;
+}
+
+.method-list .method-item:nth-child(1) { animation-delay: 0ms; }
+.method-list .method-item:nth-child(2) { animation-delay: 25ms; }
+.method-list .method-item:nth-child(3) { animation-delay: 50ms; }
+.method-list .method-item:nth-child(4) { animation-delay: 75ms; }
+.method-list .method-item:nth-child(5) { animation-delay: 100ms; }
+.method-list .method-item:nth-child(6) { animation-delay: 125ms; }
+.method-list .method-item:nth-child(n + 7) { animation-delay: 150ms; }
+
+.reveal {
+  animation: rise 260ms var(--ease) both;
+}
+
+/* ---- expanding blocks ---------------------------------------------------- */
+
+.result-block.expand {
+  animation: expand 300ms var(--ease) both;
+}
+
+@keyframes expand {
+  from { opacity: 0; transform: translateY(-4px) scaleY(0.96); }
+  to { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+
+/* ---- run button result flash --------------------------------------------- */
+
+.btn.primary.flash-pass {
+  animation: flash-pass 700ms var(--ease);
+}
+
+.btn.primary.flash-fail {
+  animation: flash-fail 700ms var(--ease);
+}
+
+@keyframes flash-pass {
+  0% { background: var(--accent); border-color: var(--accent); }
+  25% { background: var(--good); border-color: var(--good); }
+  100% { background: var(--accent); border-color: var(--accent); }
+}
+
+@keyframes flash-fail {
+  0% { background: var(--accent); border-color: var(--accent); }
+  25% { background: var(--bad); border-color: var(--bad); }
+  100% { background: var(--accent); border-color: var(--accent); }
+}
+
+/* ---- editor line flash --------------------------------------------------- */
+
+/* Jumping to a stack-trace location used to move the cursor silently. */
+.line-flash {
+  background: var(--accent-soft);
+  animation: line-flash 1000ms var(--ease) both;
+}
+
+@keyframes line-flash {
+  0% { background: var(--glow); }
+  100% { background: transparent; }
+}
+
+/* ---- skeleton ------------------------------------------------------------ */
+
+@keyframes shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+/* ---- confetti, thrown from its source ------------------------------------ */
+
+.confetti {
+  position: absolute;
+  border-radius: 1px;
+  animation: confetti-burst 1350ms cubic-bezier(0.15, 0.6, 0.4, 1) both;
+}
+
+@keyframes confetti-burst {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    /* Outward throw, then gravity wins. */
+    transform: translate(var(--dx), calc(var(--dy) + 60vh)) rotate(var(--spin));
+  }
+}
+
+/* ---- theme cross-fade ---------------------------------------------------- */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 260ms;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
 }

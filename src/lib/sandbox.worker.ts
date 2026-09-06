@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { deepEqual, firstDifference, format, typeOf } from './inspect';
+import { deepEqual, firstDifference, format, stringDiff, typeOf } from './inspect';
 import { decode, originalPositionFor, rebase, type DecodedMap, type Segment } from './sourcemap';
 import type {
   LogLine,
@@ -190,7 +190,18 @@ function mapStack(active: Session, stack: string | undefined): {
 // ---- helpers ----------------------------------------------------------------
 
 function preview(value: unknown): ValuePreview {
-  return { display: format(value), type: typeOf(value) };
+  const display = format(value);
+
+  // "Save as test case" needs to know whether this display is a usable JS
+  // expression. Rather than guess from the type, round-trip it and compare.
+  let evaluable = false;
+  try {
+    evaluable = deepEqual(new Function(`return (${display});`)(), value);
+  } catch {
+    evaluable = false;
+  }
+
+  return { display, type: typeOf(value), evaluable };
 }
 
 function describeError(err: unknown, active: Session | null): SandboxError {
@@ -336,6 +347,30 @@ async function execute(request: SandboxRun): Promise<SandboxResult> {
       passed: false,
       thrown: preview(thrown),
       error: describeError(thrown, active),
+    });
+  }
+
+  if (matcher === 'snapshot') {
+    // Compares the formatter's rendering, so it works for values that cannot
+    // be written back as a JS expression at all.
+    const actual = format(value);
+    const expected = expectedExpr.trim();
+    const passed = actual.trim() === expected;
+
+    return finish({
+      ok: true,
+      phase: 'expect',
+      passed,
+      value: preview(value),
+      expected: { display: expected || '(empty)', type: 'snapshot' },
+      difference: passed
+        ? undefined
+        : {
+            path: '(snapshot)',
+            expected: { display: expected, type: 'snapshot' },
+            actual: { display: actual, type: typeOf(value) },
+            stringDiff: stringDiff(expected, actual),
+          },
     });
   }
 

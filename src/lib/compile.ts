@@ -62,11 +62,17 @@ export function hashCode(text: string): string {
   return (hash >>> 0).toString(36);
 }
 
-/** Strip comments and string bodies so scanning cannot trip over their contents. */
+/**
+ * Strip comments and string bodies so scanning cannot trip over their contents.
+ *
+ * Every branch blanks characters in place rather than removing them: the result
+ * must stay the same length as the input, so offsets found here still index
+ * correctly into the original source.
+ */
 function stripNoise(code: string): string {
   return code
     .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:])\/\/[^\n]*/g, (_m, lead: string) => lead)
+    .replace(/(^|[^:])\/\/[^\n]*/g, (match, lead: string) => lead + ' '.repeat(match.length - lead.length))
     .replace(/`(?:\\.|[^`\\])*`/g, (match) => `\`${' '.repeat(Math.max(0, match.length - 2))}\``);
 }
 
@@ -199,15 +205,30 @@ function parseParam(text: string): ParamInfo {
   return { name: name.replace(/\?$/, '').trim(), optional, rest };
 }
 
-/** Module specifiers this method imports from, in source order. */
+/**
+ * Module specifiers this method imports at run time, in source order.
+ *
+ * Whole-statement `import type` is excluded: TypeScript erases it, so requiring
+ * it would be pointless, and a type-only cycle — which TypeScript permits — would
+ * otherwise be reported as an import cycle. Inline `{ type A, b }` still counts,
+ * because `b` is a real runtime binding.
+ */
 export function detectImports(code: string): string[] {
   const source = stripNoise(code);
+
+  const typeOnly = new Set<string>();
+  const typePattern = /\bimport\s+type\s+[\w$*{}\s,]+?\bfrom\s*["']([^"']+)["']/g;
+  let typeMatch: RegExpExecArray | null;
+  while ((typeMatch = typePattern.exec(source)) !== null) {
+    typeOnly.add(typeMatch[1]);
+  }
+
   const specifiers: string[] = [];
   const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
-    if (!specifiers.includes(match[1])) specifiers.push(match[1]);
+    if (!typeOnly.has(match[1]) && !specifiers.includes(match[1])) specifiers.push(match[1]);
   }
   return specifiers;
 }

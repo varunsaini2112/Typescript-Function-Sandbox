@@ -6,7 +6,11 @@ import RunPanel from './components/RunPanel';
 import TestsPanel from './components/TestsPanel';
 import TagEditor from './components/TagEditor';
 import Toast, { type ToastState } from './components/Toast';
-import ExportMenu from './components/ExportMenu';
+import type { SaveState } from './components/SaveIndicator';
+import TopBar from './components/TopBar';
+import Celebration, { type Origin } from './components/Celebration';
+import { playCue } from './lib/sound';
+import { useBusyIndicator } from './lib/useBusy';
 import { detectEntryName, hashCode } from './lib/compile';
 import { generateSourceFile, generateTestFile, parseSourceFile } from './lib/codegen';
 import { getDiagnostics } from './lib/diagnostics';
@@ -32,15 +36,11 @@ import type {
   SandboxResult,
   SourceLocation,
   TestCase,
-  ThemePref,
   TypeDiagnostic,
   Workspace,
 } from './types';
 
 type ResultsByMethod = Record<string, Record<string, SandboxResult>>;
-
-const THEME_LABEL: Record<ThemePref, string> = { light: '☀ Light', dark: '☾ Dark', system: '◐ System' };
-const THEME_ORDER: ThemePref[] = ['system', 'light', 'dark'];
 
 const PREAMBLE_URI = 'file:///preamble.ts';
 
@@ -67,10 +67,23 @@ export default function App() {
   const [runningTests, setRunningTests] = useState<Set<string>>(new Set());
   const [diagnostics, setDiagnostics] = useState<Record<string, TypeDiagnostic[]>>({});
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
+  const [celebration, setCelebration] = useState(0);
+  const [runningAll, setRunningAll] = useState(false);
+  const [burstOrigin, setBurstOrigin] = useState<Origin | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
+  const showGlobalProgress = useBusyIndicator(runningAll);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const saveTimer = useRef<number | null>(null);
+  const firstRender = useRef(true);
+  const runAllRef = useRef<HTMLButtonElement>(null);
+
+  const cue = useCallback(
+    (kind: Parameters<typeof playCue>[0]) => playCue(kind, workspace.sound, workspace.cueSet),
+    [workspace.sound, workspace.cueSet],
+  );
 
   const notify = useCallback((message: string, options: Partial<ToastState> = {}) => {
     setToast({ id: uid(), message, ...options });
@@ -81,10 +94,22 @@ export default function App() {
   // Debounced: the editor fires on every keystroke, and serialising the whole
   // workspace that often is pure waste.
   useEffect(() => {
+    // The first pass is just loading what was already stored.
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+
+    setSaveState({ status: 'saving' });
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       const outcome = saveWorkspace(workspace);
-      if (!outcome.ok) notify(outcome.message, { tone: 'error' });
+      if (outcome.ok) {
+        setSaveState({ status: 'saved', at: Date.now() });
+      } else {
+        setSaveState({ status: 'error', message: outcome.message });
+        notify(outcome.message, { tone: 'error' });
+      }
     }, 400);
 
     return () => {
@@ -101,10 +126,15 @@ export default function App() {
   // ---- theme ----------------------------------------------------------------
 
   const [resolvedTheme, setResolvedTheme] = useState(() => applyTheme(workspace.theme));
+  const appliedTheme = useRef(workspace.theme);
 
   useEffect(() => {
-    setResolvedTheme(applyTheme(workspace.theme));
-    return watchSystemTheme(workspace.theme, () => setResolvedTheme(applyTheme(workspace.theme)));
+    // Cross-fade only for a real change of preference, never the first paint.
+    const changed = appliedTheme.current !== workspace.theme;
+    appliedTheme.current = workspace.theme;
+
+    setResolvedTheme(applyTheme(workspace.theme, changed));
+    return watchSystemTheme(workspace.theme, () => setResolvedTheme(applyTheme(workspace.theme, true)));
   }, [workspace.theme]);
 
   // ---- selection ------------------------------------------------------------
@@ -156,13 +186,24 @@ export default function App() {
   const jumpTo = useCallback((location: SourceLocation) => {
     const editor = editorRef.current;
     if (!editor) return;
+
     editor.revealLineInCenter(location.line);
     editor.setPosition({ lineNumber: location.line, column: location.column });
     editor.focus();
+
+    // Without this the cursor moves silently and you have to hunt for it.
+    const flash = editor.createDecorationsCollection([
+      {
+        range: new monaco.Range(location.line, 1, location.line, 1),
+        options: { isWholeLine: true, className: 'line-flash' },
+      },
+    ]);
+    setTimeout(() => flash.clear(), 1000);
   }, []);
 
   const onEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
+    setEditorReady(true);
   };
 
   // ---- method lifecycle -----------------------------------------------------
@@ -241,6 +282,7 @@ export default function App() {
       selected.lastArgsExpr,
     );
     setRunResults((prev) => ({ ...prev, [selected.id]: result }));
+    if (!result.ok) cue(result.phase === 'compile' || result.phase === 'resolve' ? 'error' : 'fail');
     setWorkspace((ws) => ({
       ...ws,
       history: pushHistory(ws.history, selected.id, {
@@ -274,13 +316,16 @@ export default function App() {
     if (!tests.length) return;
     setRunningTests(new Set(tests.map((t) => t.id)));
 
-    await runTests(
+    const startedAt = performance.now();
+    const outcomes = await runTests(
       method,
       workspace.methods,
       workspace.preamble,
       tests,
       undefined,
       ({ testId, result }) => {
+        // On an 80ms suite this would be a machine-gun; narrate only slow runs.
+        if (performance.now() - startedAt > 180) cue('tick');
         setTestResults((prev) => ({
           ...prev,
           [method.id]: { ...(prev[method.id] ?? {}), [testId]: result },
@@ -294,11 +339,13 @@ export default function App() {
     );
 
     setRunningTests(new Set());
+    cue(outcomes.every((o) => isPass(o.result)) ? 'pass' : 'fail');
   };
 
   const runEverything = async () => {
     let pass = 0;
     let fail = 0;
+    setRunningAll(true);
 
     for (const method of workspace.methods) {
       const tests = method.tests.filter((t) => t.enabled);
@@ -313,6 +360,19 @@ export default function App() {
         },
       }));
       for (const outcome of outcomes) (isPass(outcome.result) ? pass++ : fail++);
+    }
+
+    setRunningAll(false);
+
+    // Reserved for a whole workspace going green — firing it on every passing
+    // run would make it meaningless within a minute.
+    if (fail === 0 && pass > 0) {
+      const rect = runAllRef.current?.getBoundingClientRect();
+      setBurstOrigin(rect ? { x: rect.left + rect.width / 2, y: rect.bottom } : null);
+      setCelebration((n) => n + 1);
+      cue('celebrate');
+    } else if (fail > 0) {
+      cue('fail');
     }
 
     notify(
@@ -368,10 +428,13 @@ export default function App() {
     const result = runResults[selected.id];
     if (!result?.ok || !result.value) return;
 
+    // The formatter renders for reading, not for re-evaluation — a Date or a
+    // Map would produce an expectation that cannot parse. The worker reports
+    // whether this particular display round-trips, so pick the matcher that fits.
     const test = newTest({
       name: `case ${selected.tests.length + 1}`,
       argsExpr: selected.lastArgsExpr,
-      matcher: 'equals',
+      matcher: result.value.evaluable ? 'equals' : 'snapshot',
       expectedExpr: result.value.display,
     });
     patchMethod(selected.id, { tests: [...selected.tests, test] });
@@ -578,6 +641,8 @@ export default function App() {
 
   const editorOptions = {
     fontSize: 13,
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontLigatures: true,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     tabSize: 2,
@@ -587,65 +652,36 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <strong>TS Sandbox</strong>
-          <span className="hint">write · run · test TypeScript methods</span>
-        </div>
+      <TopBar
+        workspace={workspace}
+        saveState={saveState}
+        selectedName={editingPreamble ? null : (selected?.name ?? null)}
+        runningAll={runningAll}
+        runAllRef={runAllRef}
+        onRunAll={runEverything}
+        onExportMethod={exportMethod}
+        onExportWorkspace={exportWorkspace}
+        onImport={() => fileInput.current?.click()}
+        onAddExamples={addExamples}
+        onReset={doReset}
+        onPatch={(patch) => setWorkspace((ws) => ({ ...ws, ...patch }))}
+      />
 
-        <div className="topbar-actions">
-          <label className="toggle" title="Refuse to run a method that has type errors">
-            <input
-              type="checkbox"
-              checked={workspace.blockRunOnTypeError}
-              onChange={(e) => setWorkspace((ws) => ({ ...ws, blockRunOnTypeError: e.target.checked }))}
-            />
-            block on type errors
-          </label>
-          <button className="btn" onClick={runEverything} disabled={workspace.methods.length === 0}>
-            ▶ Run all tests
-          </button>
-          <button
-            className="btn"
-            onClick={() =>
-              setWorkspace((ws) => ({
-                ...ws,
-                theme: THEME_ORDER[(THEME_ORDER.indexOf(ws.theme) + 1) % THEME_ORDER.length],
-              }))
-            }
-            aria-label={`Theme: ${workspace.theme}. Click to change.`}
-          >
-            {THEME_LABEL[workspace.theme]}
-          </button>
-          <ExportMenu
-            methodName={editingPreamble ? null : (selected?.name ?? null)}
-            onExportMethod={exportMethod}
-            onExportWorkspace={exportWorkspace}
-          />
-          <button className="btn" onClick={() => fileInput.current?.click()}>
-            Import
-          </button>
-          <button className="btn" onClick={addExamples} title="Add any bundled examples you do not have yet">
-            Examples
-          </button>
-          <button className="btn" onClick={doReset}>
-            Reset
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            accept=".ts,.tsx,.js,.json,application/json,text/plain"
-            hidden
-            aria-label="Import method (.ts) or workspace (.json) files"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length) void doImport(files);
-              e.target.value = '';
-            }}
-          />
-        </div>
-      </header>
+      <input
+        ref={fileInput}
+        type="file"
+        multiple
+        accept=".ts,.tsx,.js,.json,application/json,text/plain"
+        hidden
+        aria-label="Import method (.ts) or workspace (.json) files"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) void doImport(files);
+          e.target.value = '';
+        }}
+      />
+
+      {showGlobalProgress && <div className="running-bar global" aria-label="Running every test" />}
 
       <div className="body">
         <Sidebar
@@ -690,6 +726,7 @@ export default function App() {
                 language="typescript"
                 theme={monacoTheme}
                 value={workspace.preamble}
+                loading={<div className="editor-skeleton" aria-label="Loading editor" />}
                 onChange={(value) => setWorkspace((ws) => ({ ...ws, preamble: value ?? '' }))}
                 options={editorOptions}
               />
@@ -736,13 +773,14 @@ export default function App() {
                 />
               </div>
 
-              <div className="editor-wrap">
+              <div className={`editor-wrap ${editorReady ? 'ready' : ''}`}>
                 <Editor
                   path={`file:///${selected.name || selected.id}.ts`}
                   language="typescript"
                   theme={monacoTheme}
                   value={selected.code}
                   onMount={onEditorMount}
+                  loading={<div className="editor-skeleton" aria-label="Loading editor" />}
                   onChange={(value) => patchMethod(selected.id, { code: value ?? '' })}
                   options={editorOptions}
                 />
@@ -750,7 +788,7 @@ export default function App() {
             </main>
 
             <aside className="panel">
-              <div className="tabs" role="tablist">
+              <div className={`tabs on-${tab}`} role="tablist">
                 <button
                   role="tab"
                   aria-selected={tab === 'run'}
@@ -814,6 +852,7 @@ export default function App() {
         )}
       </div>
 
+      <Celebration trigger={celebration} origin={burstOrigin} />
       {toast && <Toast toast={toast} onDismiss={() => setToast(null)} />}
     </div>
   );

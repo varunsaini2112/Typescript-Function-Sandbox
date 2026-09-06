@@ -1,4 +1,6 @@
-export type Matcher = 'equals' | 'throws' | 'truthy' | 'any';
+import type { CueSet } from './lib/sound';
+
+export type Matcher = 'equals' | 'throws' | 'truthy' | 'any' | 'snapshot';
 
 export type ThemePref = 'light' | 'dark' | 'system';
 
@@ -38,6 +40,10 @@ export interface Workspace {
   /** Types and helpers prepended to every method at compile time */
   preamble: string;
   theme: ThemePref;
+  /** Play short cues when a run finishes. */
+  sound: boolean;
+  /** Which synthesised cue palette to use. */
+  cueSet: CueSet;
   blockRunOnTypeError: boolean;
   /** Most recent runs per method id, newest first */
   history: Record<string, RunHistoryEntry[]>;
@@ -56,6 +62,12 @@ export interface RunHistoryEntry {
 export interface ValuePreview {
   display: string;
   type: string;
+  /**
+   * Whether `display` round-trips: evaluating it as JS reproduces the value.
+   * False for Dates, Maps, functions and anything else the formatter renders
+   * for reading rather than for re-evaluation.
+   */
+  evaluable?: boolean;
 }
 
 /** A position in the user's own source, recovered through the source map. */
