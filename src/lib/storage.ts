@@ -2,6 +2,15 @@ import type { MethodDoc, RunHistoryEntry, TestCase, Workspace } from '../types';
 
 const KEY = 'ts-sandbox:workspace:v1';
 
+export const DEFAULT_PANEL_WIDTH = 420;
+export const MIN_PANEL_WIDTH = 320;
+
+/** Keep the panel usable and never let it crowd out the editor. */
+export function clampPanelWidth(width: number, viewport = 1280): number {
+  const max = Math.max(MIN_PANEL_WIDTH, Math.min(760, viewport - 620));
+  return Math.round(Math.min(max, Math.max(MIN_PANEL_WIDTH, width)));
+}
+
 /** Runs kept per method. Bounded because history shares the localStorage quota. */
 export const HISTORY_LIMIT = 10;
 
@@ -369,6 +378,8 @@ export function seedWorkspace(): Workspace {
     sound: true,
     cueSet: 'chime',
     blockRunOnTypeError: false,
+    panelWidth: DEFAULT_PANEL_WIDTH,
+    panelOpen: true,
     history: {},
   };
 }
@@ -391,6 +402,8 @@ export function loadWorkspace(): Workspace {
       sound: parsed.sound ?? true,
       cueSet: parsed.cueSet ?? 'chime',
       blockRunOnTypeError: parsed.blockRunOnTypeError ?? false,
+      panelWidth: clampPanelWidth(parsed.panelWidth ?? DEFAULT_PANEL_WIDTH),
+      panelOpen: parsed.panelOpen ?? true,
       history: parsed.history ?? {},
     };
   } catch {

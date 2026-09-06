@@ -9,6 +9,7 @@ import Toast, { type ToastState } from './components/Toast';
 import type { SaveState } from './components/SaveIndicator';
 import TopBar from './components/TopBar';
 import Celebration, { type Origin } from './components/Celebration';
+import Splitter from './components/Splitter';
 import { playCue } from './lib/sound';
 import { useBusyIndicator } from './lib/useBusy';
 import { detectEntryName, hashCode } from './lib/compile';
@@ -27,6 +28,7 @@ import {
   newTest,
   pushHistory,
   saveWorkspace,
+  clampPanelWidth,
   seedWorkspace,
   uid,
   uniqueName,
@@ -72,6 +74,10 @@ export default function App() {
   const [runningAll, setRunningAll] = useState(false);
   const [burstOrigin, setBurstOrigin] = useState<Origin | null>(null);
   const [editorReady, setEditorReady] = useState(false);
+  // Live width while dragging; committed to the workspace only on release, so a
+  // drag does not write to localStorage on every pointer move.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const showGlobalProgress = useBusyIndicator(runningAll);
 
   const fileInput = useRef<HTMLInputElement>(null);
@@ -116,6 +122,12 @@ export default function App() {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
   }, [workspace, notify]);
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -705,6 +717,8 @@ export default function App() {
     [workspace.methods],
   );
 
+  const panelWidth = clampPanelWidth(dragWidth ?? workspace.panelWidth, viewportWidth);
+
   const detected = selected ? detectEntryName(selected.code) : '';
   const monacoTheme = resolvedTheme === 'dark' ? 'vs-dark' : 'vs';
 
@@ -858,7 +872,18 @@ export default function App() {
               </div>
             </main>
 
-            <aside className="panel">
+            {workspace.panelOpen ? (
+              <>
+            <Splitter
+              width={panelWidth}
+              onPreview={setDragWidth}
+              onCommit={(width) => {
+                setDragWidth(null);
+                setWorkspace((ws) => ({ ...ws, panelWidth: width }));
+              }}
+            />
+
+            <aside className="panel" style={{ width: panelWidth }}>
               <div className={`tabs on-${tab}`} role="tablist">
                 <button
                   role="tab"
@@ -875,6 +900,14 @@ export default function App() {
                   onClick={() => setTab('tests')}
                 >
                   Tests <span className="count">{selected.tests.length}</span>
+                </button>
+                <button
+                  className="icon panel-close"
+                  aria-label="Hide the results panel"
+                  title="Hide panel"
+                  onClick={() => setWorkspace((ws) => ({ ...ws, panelOpen: false }))}
+                >
+                  ✕
                 </button>
               </div>
 
@@ -912,6 +945,18 @@ export default function App() {
                 />
               )}
             </aside>
+              </>
+            ) : (
+              <button
+                className="panel-rail"
+                onClick={() => setWorkspace((ws) => ({ ...ws, panelOpen: true }))}
+                aria-label="Show the results panel"
+                title="Show panel"
+              >
+                <span className="panel-rail-chevron" aria-hidden="true">‹</span>
+                <span className="panel-rail-label">Run · Tests</span>
+              </button>
+            )}
           </>
         ) : (
           <div className="blank-slate">

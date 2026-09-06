@@ -45,6 +45,10 @@ export interface Workspace {
   /** Which synthesised cue palette to use. */
   cueSet: CueSet;
   blockRunOnTypeError: boolean;
+  /** Width of the results panel in pixels, set by dragging the splitter. */
+  panelWidth: number;
+  /** Whether the results panel is showing at all. */
+  panelOpen: boolean;
   /** Most recent runs per method id, newest first */
   history: Record<string, RunHistoryEntry[]>;
 }
